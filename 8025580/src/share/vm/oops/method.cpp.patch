@@ -1,0 +1,11 @@
+--- old/src/share/vm/oops/method.cpp	2014-05-12 15:11:06.104099500 +0400
++++ new/src/share/vm/oops/method.cpp	2014-05-12 15:11:05.791586000 +0400
+@@ -1017,7 +1017,7 @@
+  *  security related stack walks (like Reflection.getCallerClass).
+  */
+ bool Method::is_ignored_by_security_stack_walk() const {
+-  const bool use_new_reflection = JDK_Version::is_gte_jdk14x_version() && UseNewReflection;
++  const bool use_new_reflection = JDK_Version::is_gte_jdk14x_version();
+ 
+   if (intrinsic_id() == vmIntrinsics::_invoke) {
+     // This is Method.invoke() -- ignore it

@@ -1,0 +1,197 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Cdiff src/share/vm/prims/jvm.cpp</title>
+</head>
+<body id="SUNWwebrev">
+<h2>src/share/vm/prims/jvm.cpp</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+        <pre>
+<hr /><span class="oldmarker">*** 1834,1844 ****</span>
+        if (offset == java_lang_Throwable::get_backtrace_offset()) continue;
+      }
+  
+      if (!publicOnly || fs.access_flags().is_public()) {
+        fd.reinitialize(k(), fs.index());
+<span class="changed">!       oop field = Reflection::new_field(&amp;fd, UseNewReflection, CHECK_NULL);</span>
+        result-&gt;obj_at_put(out_idx, field);
+        ++out_idx;
+      }
+    }
+    assert(out_idx == num_fields, "just checking");
+<span class="newmarker">--- 1834,1844 ----</span>
+        if (offset == java_lang_Throwable::get_backtrace_offset()) continue;
+      }
+  
+      if (!publicOnly || fs.access_flags().is_public()) {
+        fd.reinitialize(k(), fs.index());
+<span class="changed">!       oop field = Reflection::new_field(&amp;fd, CHECK_NULL);</span>
+        result-&gt;obj_at_put(out_idx, field);
+        ++out_idx;
+      }
+    }
+    assert(out_idx == num_fields, "just checking");
+<hr /><span class="oldmarker">*** 1912,1922 ****</span>
+      } else {
+        oop m;
+        if (want_constructor) {
+          m = Reflection::new_constructor(method, CHECK_NULL);
+        } else {
+<span class="changed">!         m = Reflection::new_method(method, UseNewReflection, false, CHECK_NULL);</span>
+        }
+        result-&gt;obj_at_put(i, m);
+      }
+    }
+  
+<span class="newmarker">--- 1912,1922 ----</span>
+      } else {
+        oop m;
+        if (want_constructor) {
+          m = Reflection::new_constructor(method, CHECK_NULL);
+        } else {
+<span class="changed">!         m = Reflection::new_method(method, false, CHECK_NULL);</span>
+        }
+        result-&gt;obj_at_put(i, m);
+      }
+    }
+  
+<hr /><span class="oldmarker">*** 2035,2045 ****</span>
+    if (m.is_null()) {
+      THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up method in target class");
+    }
+    oop method;
+    if (!m-&gt;is_initializer() || m-&gt;is_static()) {
+<span class="changed">!     method = Reflection::new_method(m, true, true, CHECK_NULL);</span>
+    } else {
+      method = Reflection::new_constructor(m, CHECK_NULL);
+    }
+    return JNIHandles::make_local(method);
+  }
+<span class="newmarker">--- 2035,2045 ----</span>
+    if (m.is_null()) {
+      THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up method in target class");
+    }
+    oop method;
+    if (!m-&gt;is_initializer() || m-&gt;is_static()) {
+<span class="changed">!     method = Reflection::new_method(m, true, CHECK_NULL);</span>
+    } else {
+      method = Reflection::new_constructor(m, CHECK_NULL);
+    }
+    return JNIHandles::make_local(method);
+  }
+<hr /><span class="oldmarker">*** 2085,2095 ****</span>
+    fieldDescriptor fd;
+    Klass* target_klass = k-&gt;find_field(name, sig, &amp;fd);
+    if (target_klass == NULL) {
+      THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
+    }
+<span class="changed">!   oop field = Reflection::new_field(&amp;fd, true, CHECK_NULL);</span>
+    return JNIHandles::make_local(field);
+  }
+  
+  JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject unusedl, jint index))
+  {
+<span class="newmarker">--- 2085,2095 ----</span>
+    fieldDescriptor fd;
+    Klass* target_klass = k-&gt;find_field(name, sig, &amp;fd);
+    if (target_klass == NULL) {
+      THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
+    }
+<span class="changed">!   oop field = Reflection::new_field(&amp;fd, CHECK_NULL);</span>
+    return JNIHandles::make_local(field);
+  }
+  
+  JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject unusedl, jint index))
+  {
+<hr /><span class="oldmarker">*** 3500,3510 ****</span>
+  // Return the first non-null class loader up the execution stack, or null
+  // if only code from the null class loader is on the stack.
+  
+  JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
+    for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
+<span class="removed">-     // UseNewReflection</span>
+      vfst.skip_reflection_related_frames(); // Only needed for 1.4 reflection
+      oop loader = vfst.method()-&gt;method_holder()-&gt;class_loader();
+      if (loader != NULL) {
+        return JNIHandles::make_local(env, loader);
+      }
+<span class="newmarker">--- 3500,3509 ----</span>
+</pre></body></html>
+

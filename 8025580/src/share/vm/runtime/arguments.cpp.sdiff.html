@@ -1,0 +1,183 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/runtime </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/runtime/arguments.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 293   { "MinPermHeapExpansion", JDK_Version::jdk(8),  JDK_Version::jdk(9) },
+ 294   { "MaxPermHeapExpansion", JDK_Version::jdk(8),  JDK_Version::jdk(9) },
+ 295   { "CMSRevisitStackSize",           JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 296   { "PrintRevisitStats",             JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 297   { "UseVectoredExceptions",         JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 298   { "UseSplitVerifier",              JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 299   { "UseISM",                        JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 300   { "UsePermISM",                    JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 301   { "UseMPSS",                       JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 302   { "UseStringCache",                JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 303   { "UseOldInlining",                JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 304   { "SafepointPollOffset",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 305 #ifdef PRODUCT
+ 306   { "DesiredMethodLimit",
+ 307                            JDK_Version::jdk_update(7, 2), JDK_Version::jdk(8) },
+ 308 #endif // PRODUCT
+ 309   { "UseVMInterruptibleIO",          JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 310   { "UseBoundThreads",               JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 311   { "DefaultThreadPriority",         JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 312   { "NoYieldsInMicrolock",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
+
+
+ 313   { NULL, JDK_Version(0), JDK_Version(0) }
+ 314 };
+ 315 
+ 316 // Returns true if the flag is obsolete and fits into the range specified
+ 317 // for being ignored.  In the case that the flag is ignored, the 'version'
+ 318 // value is filled in with the version number when the flag became
+ 319 // obsolete so that that value can be displayed to the user.
+ 320 bool Arguments::is_newly_obsolete(const char *s, JDK_Version* version) {
+ 321   int i = 0;
+ 322   assert(version != NULL, "Must provide a version buffer");
+ 323   while (obsolete_jvm_flags[i].name != NULL) {
+ 324     const ObsoleteFlag&amp; flag_status = obsolete_jvm_flags[i];
+ 325     // &lt;flag&gt;=xxx form
+ 326     // [-|+]&lt;flag&gt; form
+ 327     if ((strncmp(flag_status.name, s, strlen(flag_status.name)) == 0) ||
+ 328         ((s[0] == '+' || s[0] == '-') &amp;&amp;
+ 329         (strncmp(flag_status.name, &amp;s[1], strlen(flag_status.name)) == 0))) {
+ 330       if (JDK_Version::current().compare(flag_status.accept_until) == -1) {
+ 331           *version = flag_status.obsoleted_in;
+ 332           return true;
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 293   { "MinPermHeapExpansion", JDK_Version::jdk(8),  JDK_Version::jdk(9) },
+ 294   { "MaxPermHeapExpansion", JDK_Version::jdk(8),  JDK_Version::jdk(9) },
+ 295   { "CMSRevisitStackSize",           JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 296   { "PrintRevisitStats",             JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 297   { "UseVectoredExceptions",         JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 298   { "UseSplitVerifier",              JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 299   { "UseISM",                        JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 300   { "UsePermISM",                    JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 301   { "UseMPSS",                       JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 302   { "UseStringCache",                JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 303   { "UseOldInlining",                JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 304   { "SafepointPollOffset",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 305 #ifdef PRODUCT
+ 306   { "DesiredMethodLimit",
+ 307                            JDK_Version::jdk_update(7, 2), JDK_Version::jdk(8) },
+ 308 #endif // PRODUCT
+ 309   { "UseVMInterruptibleIO",          JDK_Version::jdk(8), JDK_Version::jdk(9) },
+ 310   { "UseBoundThreads",               JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 311   { "DefaultThreadPriority",         JDK_Version::jdk(9), JDK_Version::jdk(10) },
+ 312   { "NoYieldsInMicrolock",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
+<span class="new"> 313   { "UseNewReflection",              JDK_Version::jdk(9), JDK_Version::jdk(10) },</span>
+<span class="new"> 314   { "ReflectionWrapResolutionErrors",JDK_Version::jdk(9), JDK_Version::jdk(10) },</span>
+ 315   { NULL, JDK_Version(0), JDK_Version(0) }
+ 316 };
+ 317 
+ 318 // Returns true if the flag is obsolete and fits into the range specified
+ 319 // for being ignored.  In the case that the flag is ignored, the 'version'
+ 320 // value is filled in with the version number when the flag became
+ 321 // obsolete so that that value can be displayed to the user.
+ 322 bool Arguments::is_newly_obsolete(const char *s, JDK_Version* version) {
+ 323   int i = 0;
+ 324   assert(version != NULL, "Must provide a version buffer");
+ 325   while (obsolete_jvm_flags[i].name != NULL) {
+ 326     const ObsoleteFlag&amp; flag_status = obsolete_jvm_flags[i];
+ 327     // &lt;flag&gt;=xxx form
+ 328     // [-|+]&lt;flag&gt; form
+ 329     if ((strncmp(flag_status.name, s, strlen(flag_status.name)) == 0) ||
+ 330         ((s[0] == '+' || s[0] == '-') &amp;&amp;
+ 331         (strncmp(flag_status.name, &amp;s[1], strlen(flag_status.name)) == 0))) {
+ 332       if (JDK_Version::current().compare(flag_status.accept_until) == -1) {
+ 333           *version = flag_status.obsoleted_in;
+ 334           return true;
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>

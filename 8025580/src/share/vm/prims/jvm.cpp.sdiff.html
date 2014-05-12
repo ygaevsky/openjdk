@@ -1,0 +1,525 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/prims </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/prims/jvm.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+1819     if (k() == SystemDictionary::Throwable_klass()) {
+1820       num_fields--;
+1821       skip_backtrace = true;
+1822     }
+1823   }
+1824 
+1825   objArrayOop r = oopFactory::new_objArray(SystemDictionary::reflect_Field_klass(), num_fields, CHECK_NULL);
+1826   objArrayHandle result (THREAD, r);
+1827 
+1828   int out_idx = 0;
+1829   fieldDescriptor fd;
+1830   for (JavaFieldStream fs(k); !fs.done(); fs.next()) {
+1831     if (skip_backtrace) {
+1832       // 4496456 skip java.lang.Throwable.backtrace
+1833       int offset = fs.offset();
+1834       if (offset == java_lang_Throwable::get_backtrace_offset()) continue;
+1835     }
+1836 
+1837     if (!publicOnly || fs.access_flags().is_public()) {
+1838       fd.reinitialize(k(), fs.index());
+<span class="changed">1839       oop field = Reflection::new_field(&amp;fd, UseNewReflection, CHECK_NULL);</span>
+1840       result-&gt;obj_at_put(out_idx, field);
+1841       ++out_idx;
+1842     }
+1843   }
+1844   assert(out_idx == num_fields, "just checking");
+1845   return (jobjectArray) JNIHandles::make_local(env, result());
+1846 }
+1847 JVM_END
+1848 
+1849 static bool select_method(methodHandle method, bool want_constructor) {
+1850   if (want_constructor) {
+1851     return (method-&gt;is_initializer() &amp;&amp; !method-&gt;is_static());
+1852   } else {
+1853     return  (!method-&gt;is_initializer() &amp;&amp; !method-&gt;is_overpass());
+1854   }
+1855 }
+1856 
+1857 static jobjectArray get_class_declared_methods_helper(
+1858                                   JNIEnv *env,
+1859                                   jclass ofClass, jboolean publicOnly,
+
+</pre><hr></hr><pre>
+1897 
+1898   // Allocate result
+1899   objArrayOop r = oopFactory::new_objArray(klass, num_methods, CHECK_NULL);
+1900   objArrayHandle result (THREAD, r);
+1901 
+1902   // Now just put the methods that we selected above, but go by their idnum
+1903   // in case of redefinition.  The methods can be redefined at any safepoint,
+1904   // so above when allocating the oop array and below when creating reflect
+1905   // objects.
+1906   for (int i = 0; i &lt; num_methods; i++) {
+1907     methodHandle method(THREAD, k-&gt;method_with_idnum(idnums-&gt;at(i)));
+1908     if (method.is_null()) {
+1909       // Method may have been deleted and seems this API can handle null
+1910       // Otherwise should probably put a method that throws NSME
+1911       result-&gt;obj_at_put(i, NULL);
+1912     } else {
+1913       oop m;
+1914       if (want_constructor) {
+1915         m = Reflection::new_constructor(method, CHECK_NULL);
+1916       } else {
+<span class="changed">1917         m = Reflection::new_method(method, UseNewReflection, false, CHECK_NULL);</span>
+1918       }
+1919       result-&gt;obj_at_put(i, m);
+1920     }
+1921   }
+1922 
+1923   return (jobjectArray) JNIHandles::make_local(env, result());
+1924 }
+1925 
+1926 JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredMethods(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+1927 {
+1928   JVMWrapper("JVM_GetClassDeclaredMethods");
+1929   return get_class_declared_methods_helper(env, ofClass, publicOnly,
+1930                                            /*want_constructor*/ false,
+1931                                            SystemDictionary::reflect_Method_klass(), THREAD);
+1932 }
+1933 JVM_END
+1934 
+1935 JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredConstructors(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+1936 {
+1937   JVMWrapper("JVM_GetClassDeclaredConstructors");
+
+</pre><hr></hr><pre>
+2020   if (!tag.is_method() &amp;&amp; !tag.is_interface_method()) {
+2021     THROW_MSG_0(vmSymbols::java_lang_IllegalArgumentException(), "Wrong type at constant pool index");
+2022   }
+2023   int klass_ref  = cp-&gt;uncached_klass_ref_index_at(index);
+2024   Klass* k_o;
+2025   if (force_resolution) {
+2026     k_o = cp-&gt;klass_at(klass_ref, CHECK_NULL);
+2027   } else {
+2028     k_o = ConstantPool::klass_at_if_loaded(cp, klass_ref);
+2029     if (k_o == NULL) return NULL;
+2030   }
+2031   instanceKlassHandle k(THREAD, k_o);
+2032   Symbol* name = cp-&gt;uncached_name_ref_at(index);
+2033   Symbol* sig  = cp-&gt;uncached_signature_ref_at(index);
+2034   methodHandle m (THREAD, k-&gt;find_method(name, sig));
+2035   if (m.is_null()) {
+2036     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up method in target class");
+2037   }
+2038   oop method;
+2039   if (!m-&gt;is_initializer() || m-&gt;is_static()) {
+<span class="changed">2040     method = Reflection::new_method(m, true, true, CHECK_NULL);</span>
+2041   } else {
+2042     method = Reflection::new_constructor(m, CHECK_NULL);
+2043   }
+2044   return JNIHandles::make_local(method);
+2045 }
+2046 
+2047 JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+2048 {
+2049   JVMWrapper("JVM_ConstantPoolGetMethodAt");
+2050   JvmtiVMObjectAllocEventCollector oam;
+2051   constantPoolHandle cp = constantPoolHandle(THREAD, sun_reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
+2052   bounds_check(cp, index, CHECK_NULL);
+2053   jobject res = get_method_at_helper(cp, index, true, CHECK_NULL);
+2054   return res;
+2055 }
+2056 JVM_END
+2057 
+2058 JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+2059 {
+2060   JVMWrapper("JVM_ConstantPoolGetMethodAtIfLoaded");
+
+</pre><hr></hr><pre>
+2070   constantTag tag = cp-&gt;tag_at(index);
+2071   if (!tag.is_field()) {
+2072     THROW_MSG_0(vmSymbols::java_lang_IllegalArgumentException(), "Wrong type at constant pool index");
+2073   }
+2074   int klass_ref  = cp-&gt;uncached_klass_ref_index_at(index);
+2075   Klass* k_o;
+2076   if (force_resolution) {
+2077     k_o = cp-&gt;klass_at(klass_ref, CHECK_NULL);
+2078   } else {
+2079     k_o = ConstantPool::klass_at_if_loaded(cp, klass_ref);
+2080     if (k_o == NULL) return NULL;
+2081   }
+2082   instanceKlassHandle k(THREAD, k_o);
+2083   Symbol* name = cp-&gt;uncached_name_ref_at(index);
+2084   Symbol* sig  = cp-&gt;uncached_signature_ref_at(index);
+2085   fieldDescriptor fd;
+2086   Klass* target_klass = k-&gt;find_field(name, sig, &amp;fd);
+2087   if (target_klass == NULL) {
+2088     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
+2089   }
+<span class="changed">2090   oop field = Reflection::new_field(&amp;fd, true, CHECK_NULL);</span>
+2091   return JNIHandles::make_local(field);
+2092 }
+2093 
+2094 JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject unusedl, jint index))
+2095 {
+2096   JVMWrapper("JVM_ConstantPoolGetFieldAt");
+2097   JvmtiVMObjectAllocEventCollector oam;
+2098   constantPoolHandle cp = constantPoolHandle(THREAD, sun_reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
+2099   bounds_check(cp, index, CHECK_NULL);
+2100   jobject res = get_field_at_helper(cp, index, true, CHECK_NULL);
+2101   return res;
+2102 }
+2103 JVM_END
+2104 
+2105 JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+2106 {
+2107   JVMWrapper("JVM_ConstantPoolGetFieldAtIfLoaded");
+2108   JvmtiVMObjectAllocEventCollector oam;
+2109   constantPoolHandle cp = constantPoolHandle(THREAD, sun_reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
+2110   bounds_check(cp, index, CHECK_NULL);
+
+</pre><hr></hr><pre>
+3485   if (k-&gt;oop_is_typeArray()) {
+3486     // typeArray
+3487     result = TypeArrayKlass::cast(k)-&gt;allocate(length, CHECK_NULL);
+3488   } else if (k-&gt;oop_is_objArray()) {
+3489     // objArray
+3490     ObjArrayKlass* oak = ObjArrayKlass::cast(k);
+3491     oak-&gt;initialize(CHECK_NULL); // make sure class is initialized (matches Classic VM behavior)
+3492     result = oak-&gt;allocate(length, CHECK_NULL);
+3493   } else {
+3494     THROW_0(vmSymbols::java_lang_InvalidClassException());
+3495   }
+3496   return JNIHandles::make_local(env, result);
+3497 JVM_END
+3498 
+3499 
+3500 // Return the first non-null class loader up the execution stack, or null
+3501 // if only code from the null class loader is on the stack.
+3502 
+3503 JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
+3504   for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
+<span class="removed">3505     // UseNewReflection</span>
+3506     vfst.skip_reflection_related_frames(); // Only needed for 1.4 reflection
+3507     oop loader = vfst.method()-&gt;method_holder()-&gt;class_loader();
+3508     if (loader != NULL) {
+3509       return JNIHandles::make_local(env, loader);
+3510     }
+3511   }
+3512   return NULL;
+3513 JVM_END
+3514 
+3515 
+3516 // Load a class relative to the most recent class on the stack  with a non-null
+3517 // classloader.
+3518 // This function has been deprecated and should not be considered part of the
+3519 // specified JVM interface.
+3520 
+3521 JVM_ENTRY(jclass, JVM_LoadClass0(JNIEnv *env, jobject receiver,
+3522                                  jclass currClass, jstring currClassName))
+3523   JVMWrapper("JVM_LoadClass0");
+3524   // Receiver is not used
+3525   ResourceMark rm(THREAD);
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+1819     if (k() == SystemDictionary::Throwable_klass()) {
+1820       num_fields--;
+1821       skip_backtrace = true;
+1822     }
+1823   }
+1824 
+1825   objArrayOop r = oopFactory::new_objArray(SystemDictionary::reflect_Field_klass(), num_fields, CHECK_NULL);
+1826   objArrayHandle result (THREAD, r);
+1827 
+1828   int out_idx = 0;
+1829   fieldDescriptor fd;
+1830   for (JavaFieldStream fs(k); !fs.done(); fs.next()) {
+1831     if (skip_backtrace) {
+1832       // 4496456 skip java.lang.Throwable.backtrace
+1833       int offset = fs.offset();
+1834       if (offset == java_lang_Throwable::get_backtrace_offset()) continue;
+1835     }
+1836 
+1837     if (!publicOnly || fs.access_flags().is_public()) {
+1838       fd.reinitialize(k(), fs.index());
+<span class="changed">1839       oop field = Reflection::new_field(&amp;fd, CHECK_NULL);</span>
+1840       result-&gt;obj_at_put(out_idx, field);
+1841       ++out_idx;
+1842     }
+1843   }
+1844   assert(out_idx == num_fields, "just checking");
+1845   return (jobjectArray) JNIHandles::make_local(env, result());
+1846 }
+1847 JVM_END
+1848 
+1849 static bool select_method(methodHandle method, bool want_constructor) {
+1850   if (want_constructor) {
+1851     return (method-&gt;is_initializer() &amp;&amp; !method-&gt;is_static());
+1852   } else {
+1853     return  (!method-&gt;is_initializer() &amp;&amp; !method-&gt;is_overpass());
+1854   }
+1855 }
+1856 
+1857 static jobjectArray get_class_declared_methods_helper(
+1858                                   JNIEnv *env,
+1859                                   jclass ofClass, jboolean publicOnly,
+
+</pre><hr></hr><pre>
+1897 
+1898   // Allocate result
+1899   objArrayOop r = oopFactory::new_objArray(klass, num_methods, CHECK_NULL);
+1900   objArrayHandle result (THREAD, r);
+1901 
+1902   // Now just put the methods that we selected above, but go by their idnum
+1903   // in case of redefinition.  The methods can be redefined at any safepoint,
+1904   // so above when allocating the oop array and below when creating reflect
+1905   // objects.
+1906   for (int i = 0; i &lt; num_methods; i++) {
+1907     methodHandle method(THREAD, k-&gt;method_with_idnum(idnums-&gt;at(i)));
+1908     if (method.is_null()) {
+1909       // Method may have been deleted and seems this API can handle null
+1910       // Otherwise should probably put a method that throws NSME
+1911       result-&gt;obj_at_put(i, NULL);
+1912     } else {
+1913       oop m;
+1914       if (want_constructor) {
+1915         m = Reflection::new_constructor(method, CHECK_NULL);
+1916       } else {
+<span class="changed">1917         m = Reflection::new_method(method, false, CHECK_NULL);</span>
+1918       }
+1919       result-&gt;obj_at_put(i, m);
+1920     }
+1921   }
+1922 
+1923   return (jobjectArray) JNIHandles::make_local(env, result());
+1924 }
+1925 
+1926 JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredMethods(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+1927 {
+1928   JVMWrapper("JVM_GetClassDeclaredMethods");
+1929   return get_class_declared_methods_helper(env, ofClass, publicOnly,
+1930                                            /*want_constructor*/ false,
+1931                                            SystemDictionary::reflect_Method_klass(), THREAD);
+1932 }
+1933 JVM_END
+1934 
+1935 JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredConstructors(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+1936 {
+1937   JVMWrapper("JVM_GetClassDeclaredConstructors");
+
+</pre><hr></hr><pre>
+2020   if (!tag.is_method() &amp;&amp; !tag.is_interface_method()) {
+2021     THROW_MSG_0(vmSymbols::java_lang_IllegalArgumentException(), "Wrong type at constant pool index");
+2022   }
+2023   int klass_ref  = cp-&gt;uncached_klass_ref_index_at(index);
+2024   Klass* k_o;
+2025   if (force_resolution) {
+2026     k_o = cp-&gt;klass_at(klass_ref, CHECK_NULL);
+2027   } else {
+2028     k_o = ConstantPool::klass_at_if_loaded(cp, klass_ref);
+2029     if (k_o == NULL) return NULL;
+2030   }
+2031   instanceKlassHandle k(THREAD, k_o);
+2032   Symbol* name = cp-&gt;uncached_name_ref_at(index);
+2033   Symbol* sig  = cp-&gt;uncached_signature_ref_at(index);
+2034   methodHandle m (THREAD, k-&gt;find_method(name, sig));
+2035   if (m.is_null()) {
+2036     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up method in target class");
+2037   }
+2038   oop method;
+2039   if (!m-&gt;is_initializer() || m-&gt;is_static()) {
+<span class="changed">2040     method = Reflection::new_method(m, true, CHECK_NULL);</span>
+2041   } else {
+2042     method = Reflection::new_constructor(m, CHECK_NULL);
+2043   }
+2044   return JNIHandles::make_local(method);
+2045 }
+2046 
+2047 JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+2048 {
+2049   JVMWrapper("JVM_ConstantPoolGetMethodAt");
+2050   JvmtiVMObjectAllocEventCollector oam;
+2051   constantPoolHandle cp = constantPoolHandle(THREAD, sun_reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
+2052   bounds_check(cp, index, CHECK_NULL);
+2053   jobject res = get_method_at_helper(cp, index, true, CHECK_NULL);
+2054   return res;
+2055 }
+2056 JVM_END
+2057 
+2058 JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+2059 {
+2060   JVMWrapper("JVM_ConstantPoolGetMethodAtIfLoaded");
+
+</pre><hr></hr><pre>
+2070   constantTag tag = cp-&gt;tag_at(index);
+2071   if (!tag.is_field()) {
+2072     THROW_MSG_0(vmSymbols::java_lang_IllegalArgumentException(), "Wrong type at constant pool index");
+2073   }
+2074   int klass_ref  = cp-&gt;uncached_klass_ref_index_at(index);
+2075   Klass* k_o;
+2076   if (force_resolution) {
+2077     k_o = cp-&gt;klass_at(klass_ref, CHECK_NULL);
+2078   } else {
+2079     k_o = ConstantPool::klass_at_if_loaded(cp, klass_ref);
+2080     if (k_o == NULL) return NULL;
+2081   }
+2082   instanceKlassHandle k(THREAD, k_o);
+2083   Symbol* name = cp-&gt;uncached_name_ref_at(index);
+2084   Symbol* sig  = cp-&gt;uncached_signature_ref_at(index);
+2085   fieldDescriptor fd;
+2086   Klass* target_klass = k-&gt;find_field(name, sig, &amp;fd);
+2087   if (target_klass == NULL) {
+2088     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
+2089   }
+<span class="changed">2090   oop field = Reflection::new_field(&amp;fd, CHECK_NULL);</span>
+2091   return JNIHandles::make_local(field);
+2092 }
+2093 
+2094 JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject unusedl, jint index))
+2095 {
+2096   JVMWrapper("JVM_ConstantPoolGetFieldAt");
+2097   JvmtiVMObjectAllocEventCollector oam;
+2098   constantPoolHandle cp = constantPoolHandle(THREAD, sun_reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
+2099   bounds_check(cp, index, CHECK_NULL);
+2100   jobject res = get_field_at_helper(cp, index, true, CHECK_NULL);
+2101   return res;
+2102 }
+2103 JVM_END
+2104 
+2105 JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+2106 {
+2107   JVMWrapper("JVM_ConstantPoolGetFieldAtIfLoaded");
+2108   JvmtiVMObjectAllocEventCollector oam;
+2109   constantPoolHandle cp = constantPoolHandle(THREAD, sun_reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
+2110   bounds_check(cp, index, CHECK_NULL);
+
+</pre><hr></hr><pre>
+3485   if (k-&gt;oop_is_typeArray()) {
+3486     // typeArray
+3487     result = TypeArrayKlass::cast(k)-&gt;allocate(length, CHECK_NULL);
+3488   } else if (k-&gt;oop_is_objArray()) {
+3489     // objArray
+3490     ObjArrayKlass* oak = ObjArrayKlass::cast(k);
+3491     oak-&gt;initialize(CHECK_NULL); // make sure class is initialized (matches Classic VM behavior)
+3492     result = oak-&gt;allocate(length, CHECK_NULL);
+3493   } else {
+3494     THROW_0(vmSymbols::java_lang_InvalidClassException());
+3495   }
+3496   return JNIHandles::make_local(env, result);
+3497 JVM_END
+3498 
+3499 
+3500 // Return the first non-null class loader up the execution stack, or null
+3501 // if only code from the null class loader is on the stack.
+3502 
+3503 JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
+3504   for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
+
+3505     vfst.skip_reflection_related_frames(); // Only needed for 1.4 reflection
+3506     oop loader = vfst.method()-&gt;method_holder()-&gt;class_loader();
+3507     if (loader != NULL) {
+3508       return JNIHandles::make_local(env, loader);
+3509     }
+3510   }
+3511   return NULL;
+3512 JVM_END
+3513 
+3514 
+3515 // Load a class relative to the most recent class on the stack  with a non-null
+3516 // classloader.
+3517 // This function has been deprecated and should not be considered part of the
+3518 // specified JVM interface.
+3519 
+3520 JVM_ENTRY(jclass, JVM_LoadClass0(JNIEnv *env, jobject receiver,
+3521                                  jclass currClass, jstring currClassName))
+3522   JVMWrapper("JVM_LoadClass0");
+3523   // Receiver is not used
+3524   ResourceMark rm(THREAD);
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>

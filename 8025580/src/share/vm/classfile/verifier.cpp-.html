@@ -1,0 +1,2823 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>Old src/share/vm/classfile/verifier.cpp</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  *
+  23  */
+  24 
+  25 #include "precompiled.hpp"
+  26 #include "classfile/classFileStream.hpp"
+  27 #include "classfile/javaClasses.hpp"
+  28 #include "classfile/stackMapTable.hpp"
+  29 #include "classfile/stackMapFrame.hpp"
+  30 #include "classfile/stackMapTableFormat.hpp"
+  31 #include "classfile/systemDictionary.hpp"
+  32 #include "classfile/verifier.hpp"
+  33 #include "classfile/vmSymbols.hpp"
+  34 #include "interpreter/bytecodes.hpp"
+  35 #include "interpreter/bytecodeStream.hpp"
+  36 #include "memory/oopFactory.hpp"
+  37 #include "memory/resourceArea.hpp"
+  38 #include "oops/instanceKlass.hpp"
+  39 #include "oops/oop.inline.hpp"
+  40 #include "oops/typeArrayOop.hpp"
+  41 #include "prims/jvm.h"
+  42 #include "runtime/fieldDescriptor.hpp"
+  43 #include "runtime/handles.inline.hpp"
+  44 #include "runtime/interfaceSupport.hpp"
+  45 #include "runtime/javaCalls.hpp"
+  46 #include "runtime/orderAccess.hpp"
+  47 #include "runtime/os.hpp"
+  48 #ifdef TARGET_ARCH_x86
+  49 # include "bytes_x86.hpp"
+  50 #endif
+  51 #ifdef TARGET_ARCH_sparc
+  52 # include "bytes_sparc.hpp"
+  53 #endif
+  54 #ifdef TARGET_ARCH_zero
+  55 # include "bytes_zero.hpp"
+  56 #endif
+  57 #ifdef TARGET_ARCH_arm
+  58 # include "bytes_arm.hpp"
+  59 #endif
+  60 #ifdef TARGET_ARCH_ppc
+  61 # include "bytes_ppc.hpp"
+  62 #endif
+  63 
+  64 #define NOFAILOVER_MAJOR_VERSION                       51
+  65 #define NONZERO_PADDING_BYTES_IN_SWITCH_MAJOR_VERSION  51
+  66 #define STATIC_METHOD_IN_INTERFACE_MAJOR_VERSION       52
+  67 
+  68 // Access to external entry for VerifyClassCodes - old byte code verifier
+  69 
+  70 extern "C" {
+  71   typedef jboolean (*verify_byte_codes_fn_t)(JNIEnv *, jclass, char *, jint);
+  72   typedef jboolean (*verify_byte_codes_fn_new_t)(JNIEnv *, jclass, char *, jint, jint);
+  73 }
+  74 
+  75 static void* volatile _verify_byte_codes_fn = NULL;
+  76 
+  77 static volatile jint _is_new_verify_byte_codes_fn = (jint) true;
+  78 
+  79 static void* verify_byte_codes_fn() {
+  80   if (_verify_byte_codes_fn == NULL) {
+  81     void *lib_handle = os::native_java_library();
+  82     void *func = os::dll_lookup(lib_handle, "VerifyClassCodesForMajorVersion");
+  83     OrderAccess::release_store_ptr(&amp;_verify_byte_codes_fn, func);
+  84     if (func == NULL) {
+  85       OrderAccess::release_store(&amp;_is_new_verify_byte_codes_fn, false);
+  86       func = os::dll_lookup(lib_handle, "VerifyClassCodes");
+  87       OrderAccess::release_store_ptr(&amp;_verify_byte_codes_fn, func);
+  88     }
+  89   }
+  90   return (void*)_verify_byte_codes_fn;
+  91 }
+  92 
+  93 
+  94 // Methods in Verifier
+  95 
+  96 bool Verifier::should_verify_for(oop class_loader, bool should_verify_class) {
+  97   return (class_loader == NULL || !should_verify_class) ?
+  98     BytecodeVerificationLocal : BytecodeVerificationRemote;
+  99 }
+ 100 
+ 101 bool Verifier::relax_verify_for(oop loader) {
+ 102   bool trusted = java_lang_ClassLoader::is_trusted_loader(loader);
+ 103   bool need_verify =
+ 104     // verifyAll
+ 105     (BytecodeVerificationLocal &amp;&amp; BytecodeVerificationRemote) ||
+ 106     // verifyRemote
+ 107     (!BytecodeVerificationLocal &amp;&amp; BytecodeVerificationRemote &amp;&amp; !trusted);
+ 108   return !need_verify;
+ 109 }
+ 110 
+ 111 bool Verifier::verify(instanceKlassHandle klass, Verifier::Mode mode, bool should_verify_class, TRAPS) {
+ 112   HandleMark hm;
+ 113   ResourceMark rm(THREAD);
+ 114 
+ 115   Symbol* exception_name = NULL;
+ 116   const size_t message_buffer_len = klass-&gt;name()-&gt;utf8_length() + 1024;
+ 117   char* message_buffer = NEW_RESOURCE_ARRAY(char, message_buffer_len);
+ 118   char* exception_message = message_buffer;
+ 119 
+ 120   const char* klassName = klass-&gt;external_name();
+ 121   bool can_failover = FailOverToOldVerifier &amp;&amp;
+ 122       klass-&gt;major_version() &lt; NOFAILOVER_MAJOR_VERSION;
+ 123 
+ 124   // If the class should be verified, first see if we can use the split
+ 125   // verifier.  If not, or if verification fails and FailOverToOldVerifier
+ 126   // is set, then call the inference verifier.
+ 127   if (is_eligible_for_verification(klass, should_verify_class)) {
+ 128     if (TraceClassInitialization) {
+ 129       tty-&gt;print_cr("Start class verification for: %s", klassName);
+ 130     }
+ 131     if (klass-&gt;major_version() &gt;= STACKMAP_ATTRIBUTE_MAJOR_VERSION) {
+ 132       ClassVerifier split_verifier(klass, THREAD);
+ 133       split_verifier.verify_class(THREAD);
+ 134       exception_name = split_verifier.result();
+ 135       if (can_failover &amp;&amp; !HAS_PENDING_EXCEPTION &amp;&amp;
+ 136           (exception_name == vmSymbols::java_lang_VerifyError() ||
+ 137            exception_name == vmSymbols::java_lang_ClassFormatError())) {
+ 138         if (TraceClassInitialization || VerboseVerification) {
+ 139           tty-&gt;print_cr(
+ 140             "Fail over class verification to old verifier for: %s", klassName);
+ 141         }
+ 142         exception_name = inference_verify(
+ 143           klass, message_buffer, message_buffer_len, THREAD);
+ 144       }
+ 145       if (exception_name != NULL) {
+ 146         exception_message = split_verifier.exception_message();
+ 147       }
+ 148     } else {
+ 149       exception_name = inference_verify(
+ 150           klass, message_buffer, message_buffer_len, THREAD);
+ 151     }
+ 152 
+ 153     if (TraceClassInitialization || VerboseVerification) {
+ 154       if (HAS_PENDING_EXCEPTION) {
+ 155         tty-&gt;print("Verification for %s has", klassName);
+ 156         tty-&gt;print_cr(" exception pending %s ",
+ 157           InstanceKlass::cast(PENDING_EXCEPTION-&gt;klass())-&gt;external_name());
+ 158       } else if (exception_name != NULL) {
+ 159         tty-&gt;print_cr("Verification for %s failed", klassName);
+ 160       }
+ 161       tty-&gt;print_cr("End class verification for: %s", klassName);
+ 162     }
+ 163   }
+ 164 
+ 165   if (HAS_PENDING_EXCEPTION) {
+ 166     return false; // use the existing exception
+ 167   } else if (exception_name == NULL) {
+ 168     return true; // verifcation succeeded
+ 169   } else { // VerifyError or ClassFormatError to be created and thrown
+ 170     ResourceMark rm(THREAD);
+ 171     instanceKlassHandle kls =
+ 172       SystemDictionary::resolve_or_fail(exception_name, true, CHECK_false);
+ 173     while (!kls.is_null()) {
+ 174       if (kls == klass) {
+ 175         // If the class being verified is the exception we're creating
+ 176         // or one of it's superclasses, we're in trouble and are going
+ 177         // to infinitely recurse when we try to initialize the exception.
+ 178         // So bail out here by throwing the preallocated VM error.
+ 179         THROW_OOP_(Universe::virtual_machine_error_instance(), false);
+ 180       }
+ 181       kls = kls-&gt;super();
+ 182     }
+ 183     message_buffer[message_buffer_len - 1] = '\0'; // just to be sure
+ 184     THROW_MSG_(exception_name, exception_message, false);
+ 185   }
+ 186 }
+ 187 
+ 188 bool Verifier::is_eligible_for_verification(instanceKlassHandle klass, bool should_verify_class) {
+ 189   Symbol* name = klass-&gt;name();
+ 190   Klass* refl_magic_klass = SystemDictionary::reflect_MagicAccessorImpl_klass();
+ 191 
+ 192   bool is_reflect = refl_magic_klass != NULL &amp;&amp; klass-&gt;is_subtype_of(refl_magic_klass);
+ 193 
+ 194   return (should_verify_for(klass-&gt;class_loader(), should_verify_class) &amp;&amp;
+ 195     // return if the class is a bootstrapping class
+ 196     // or defineClass specified not to verify by default (flags override passed arg)
+ 197     // We need to skip the following four for bootstraping
+ 198     name != vmSymbols::java_lang_Object() &amp;&amp;
+ 199     name != vmSymbols::java_lang_Class() &amp;&amp;
+ 200     name != vmSymbols::java_lang_String() &amp;&amp;
+ 201     name != vmSymbols::java_lang_Throwable() &amp;&amp;
+ 202 
+ 203     // Can not verify the bytecodes for shared classes because they have
+ 204     // already been rewritten to contain constant pool cache indices,
+ 205     // which the verifier can't understand.
+ 206     // Shared classes shouldn't have stackmaps either.
+ 207     !klass()-&gt;is_shared() &amp;&amp;
+ 208 
+ 209     // As of the fix for 4486457 we disable verification for all of the
+ 210     // dynamically-generated bytecodes associated with the 1.4
+ 211     // reflection implementation, not just those associated with
+ 212     // sun/reflect/SerializationConstructorAccessor.
+ 213     // NOTE: this is called too early in the bootstrapping process to be
+ 214     // guarded by Universe::is_gte_jdk14x_version()/UseNewReflection.
+ 215     // Also for lambda generated code, gte jdk8
+ 216     (!is_reflect || VerifyReflectionBytecodes));
+ 217 }
+ 218 
+ 219 Symbol* Verifier::inference_verify(
+ 220     instanceKlassHandle klass, char* message, size_t message_len, TRAPS) {
+ 221   JavaThread* thread = (JavaThread*)THREAD;
+ 222   JNIEnv *env = thread-&gt;jni_environment();
+ 223 
+ 224   void* verify_func = verify_byte_codes_fn();
+ 225 
+ 226   if (verify_func == NULL) {
+ 227     jio_snprintf(message, message_len, "Could not link verifier");
+ 228     return vmSymbols::java_lang_VerifyError();
+ 229   }
+ 230 
+ 231   ResourceMark rm(THREAD);
+ 232   if (VerboseVerification) {
+ 233     tty-&gt;print_cr("Verifying class %s with old format", klass-&gt;external_name());
+ 234   }
+ 235 
+ 236   jclass cls = (jclass) JNIHandles::make_local(env, klass-&gt;java_mirror());
+ 237   jint result;
+ 238 
+ 239   {
+ 240     HandleMark hm(thread);
+ 241     ThreadToNativeFromVM ttn(thread);
+ 242     // ThreadToNativeFromVM takes care of changing thread_state, so safepoint
+ 243     // code knows that we have left the VM
+ 244 
+ 245     if (_is_new_verify_byte_codes_fn) {
+ 246       verify_byte_codes_fn_new_t func =
+ 247         CAST_TO_FN_PTR(verify_byte_codes_fn_new_t, verify_func);
+ 248       result = (*func)(env, cls, message, (int)message_len,
+ 249           klass-&gt;major_version());
+ 250     } else {
+ 251       verify_byte_codes_fn_t func =
+ 252         CAST_TO_FN_PTR(verify_byte_codes_fn_t, verify_func);
+ 253       result = (*func)(env, cls, message, (int)message_len);
+ 254     }
+ 255   }
+ 256 
+ 257   JNIHandles::destroy_local(cls);
+ 258 
+ 259   // These numbers are chosen so that VerifyClassCodes interface doesn't need
+ 260   // to be changed (still return jboolean (unsigned char)), and result is
+ 261   // 1 when verification is passed.
+ 262   if (result == 0) {
+ 263     return vmSymbols::java_lang_VerifyError();
+ 264   } else if (result == 1) {
+ 265     return NULL; // verified.
+ 266   } else if (result == 2) {
+ 267     THROW_MSG_(vmSymbols::java_lang_OutOfMemoryError(), message, NULL);
+ 268   } else if (result == 3) {
+ 269     return vmSymbols::java_lang_ClassFormatError();
+ 270   } else {
+ 271     ShouldNotReachHere();
+ 272     return NULL;
+ 273   }
+ 274 }
+ 275 
+ 276 TypeOrigin TypeOrigin::null() {
+ 277   return TypeOrigin();
+ 278 }
+ 279 TypeOrigin TypeOrigin::local(u2 index, StackMapFrame* frame) {
+ 280   assert(frame != NULL, "Must have a frame");
+ 281   return TypeOrigin(CF_LOCALS, index, StackMapFrame::copy(frame),
+ 282      frame-&gt;local_at(index));
+ 283 }
+ 284 TypeOrigin TypeOrigin::stack(u2 index, StackMapFrame* frame) {
+ 285   assert(frame != NULL, "Must have a frame");
+ 286   return TypeOrigin(CF_STACK, index, StackMapFrame::copy(frame),
+ 287       frame-&gt;stack_at(index));
+ 288 }
+ 289 TypeOrigin TypeOrigin::sm_local(u2 index, StackMapFrame* frame) {
+ 290   assert(frame != NULL, "Must have a frame");
+ 291   return TypeOrigin(SM_LOCALS, index, StackMapFrame::copy(frame),
+ 292       frame-&gt;local_at(index));
+ 293 }
+ 294 TypeOrigin TypeOrigin::sm_stack(u2 index, StackMapFrame* frame) {
+ 295   assert(frame != NULL, "Must have a frame");
+ 296   return TypeOrigin(SM_STACK, index, StackMapFrame::copy(frame),
+ 297       frame-&gt;stack_at(index));
+ 298 }
+ 299 TypeOrigin TypeOrigin::bad_index(u2 index) {
+ 300   return TypeOrigin(BAD_INDEX, index, NULL, VerificationType::bogus_type());
+ 301 }
+ 302 TypeOrigin TypeOrigin::cp(u2 index, VerificationType vt) {
+ 303   return TypeOrigin(CONST_POOL, index, NULL, vt);
+ 304 }
+ 305 TypeOrigin TypeOrigin::signature(VerificationType vt) {
+ 306   return TypeOrigin(SIG, 0, NULL, vt);
+ 307 }
+ 308 TypeOrigin TypeOrigin::implicit(VerificationType t) {
+ 309   return TypeOrigin(IMPLICIT, 0, NULL, t);
+ 310 }
+ 311 TypeOrigin TypeOrigin::frame(StackMapFrame* frame) {
+ 312   return TypeOrigin(FRAME_ONLY, 0, StackMapFrame::copy(frame),
+ 313                     VerificationType::bogus_type());
+ 314 }
+ 315 
+ 316 void TypeOrigin::reset_frame() {
+ 317   if (_frame != NULL) {
+ 318     _frame-&gt;restore();
+ 319   }
+ 320 }
+ 321 
+ 322 void TypeOrigin::details(outputStream* ss) const {
+ 323   _type.print_on(ss);
+ 324   switch (_origin) {
+ 325     case CF_LOCALS:
+ 326       ss-&gt;print(" (current frame, locals[%d])", _index);
+ 327       break;
+ 328     case CF_STACK:
+ 329       ss-&gt;print(" (current frame, stack[%d])", _index);
+ 330       break;
+ 331     case SM_LOCALS:
+ 332       ss-&gt;print(" (stack map, locals[%d])", _index);
+ 333       break;
+ 334     case SM_STACK:
+ 335       ss-&gt;print(" (stack map, stack[%d])", _index);
+ 336       break;
+ 337     case CONST_POOL:
+ 338       ss-&gt;print(" (constant pool %d)", _index);
+ 339       break;
+ 340     case SIG:
+ 341       ss-&gt;print(" (from method signature)");
+ 342       break;
+ 343     case IMPLICIT:
+ 344     case FRAME_ONLY:
+ 345     case NONE:
+ 346     default:
+ 347       ;
+ 348   }
+ 349 }
+ 350 
+ 351 #ifdef ASSERT
+ 352 void TypeOrigin::print_on(outputStream* str) const {
+ 353   str-&gt;print("{%d,%d,%p:", _origin, _index, _frame);
+ 354   if (_frame != NULL) {
+ 355     _frame-&gt;print_on(str);
+ 356   } else {
+ 357     str-&gt;print("null");
+ 358   }
+ 359   str-&gt;print(",");
+ 360   _type.print_on(str);
+ 361   str-&gt;print("}");
+ 362 }
+ 363 #endif
+ 364 
+ 365 void ErrorContext::details(outputStream* ss, const Method* method) const {
+ 366   if (is_valid()) {
+ 367     ss-&gt;print_cr("");
+ 368     ss-&gt;print_cr("Exception Details:");
+ 369     location_details(ss, method);
+ 370     reason_details(ss);
+ 371     frame_details(ss);
+ 372     bytecode_details(ss, method);
+ 373     handler_details(ss, method);
+ 374     stackmap_details(ss, method);
+ 375   }
+ 376 }
+ 377 
+ 378 void ErrorContext::reason_details(outputStream* ss) const {
+ 379   streamIndentor si(ss);
+ 380   ss-&gt;indent().print_cr("Reason:");
+ 381   streamIndentor si2(ss);
+ 382   ss-&gt;indent().print("");
+ 383   switch (_fault) {
+ 384     case INVALID_BYTECODE:
+ 385       ss-&gt;print("Error exists in the bytecode");
+ 386       break;
+ 387     case WRONG_TYPE:
+ 388       if (_expected.is_valid()) {
+ 389         ss-&gt;print("Type ");
+ 390         _type.details(ss);
+ 391         ss-&gt;print(" is not assignable to ");
+ 392         _expected.details(ss);
+ 393       } else {
+ 394         ss-&gt;print("Invalid type: ");
+ 395         _type.details(ss);
+ 396       }
+ 397       break;
+ 398     case FLAGS_MISMATCH:
+ 399       if (_expected.is_valid()) {
+ 400         ss-&gt;print("Current frame's flags are not assignable "
+ 401                   "to stack map frame's.");
+ 402       } else {
+ 403         ss-&gt;print("Current frame's flags are invalid in this context.");
+ 404       }
+ 405       break;
+ 406     case BAD_CP_INDEX:
+ 407       ss-&gt;print("Constant pool index %d is invalid", _type.index());
+ 408       break;
+ 409     case BAD_LOCAL_INDEX:
+ 410       ss-&gt;print("Local index %d is invalid", _type.index());
+ 411       break;
+ 412     case LOCALS_SIZE_MISMATCH:
+ 413       ss-&gt;print("Current frame's local size doesn't match stackmap.");
+ 414       break;
+ 415     case STACK_SIZE_MISMATCH:
+ 416       ss-&gt;print("Current frame's stack size doesn't match stackmap.");
+ 417       break;
+ 418     case STACK_OVERFLOW:
+ 419       ss-&gt;print("Exceeded max stack size.");
+ 420       break;
+ 421     case STACK_UNDERFLOW:
+ 422       ss-&gt;print("Attempt to pop empty stack.");
+ 423       break;
+ 424     case MISSING_STACKMAP:
+ 425       ss-&gt;print("Expected stackmap frame at this location.");
+ 426       break;
+ 427     case BAD_STACKMAP:
+ 428       ss-&gt;print("Invalid stackmap specification.");
+ 429       break;
+ 430     case UNKNOWN:
+ 431     default:
+ 432       ShouldNotReachHere();
+ 433       ss-&gt;print_cr("Unknown");
+ 434   }
+ 435   ss-&gt;print_cr("");
+ 436 }
+ 437 
+ 438 void ErrorContext::location_details(outputStream* ss, const Method* method) const {
+ 439   if (_bci != -1 &amp;&amp; method != NULL) {
+ 440     streamIndentor si(ss);
+ 441     const char* bytecode_name = "&lt;invalid&gt;";
+ 442     if (method-&gt;validate_bci_from_bcx(_bci) != -1) {
+ 443       Bytecodes::Code code = Bytecodes::code_or_bp_at(method-&gt;bcp_from(_bci));
+ 444       if (Bytecodes::is_defined(code)) {
+ 445           bytecode_name = Bytecodes::name(code);
+ 446       } else {
+ 447           bytecode_name = "&lt;illegal&gt;";
+ 448       }
+ 449     }
+ 450     InstanceKlass* ik = method-&gt;method_holder();
+ 451     ss-&gt;indent().print_cr("Location:");
+ 452     streamIndentor si2(ss);
+ 453     ss-&gt;indent().print_cr("%s.%s%s @%d: %s",
+ 454         ik-&gt;name()-&gt;as_C_string(), method-&gt;name()-&gt;as_C_string(),
+ 455         method-&gt;signature()-&gt;as_C_string(), _bci, bytecode_name);
+ 456   }
+ 457 }
+ 458 
+ 459 void ErrorContext::frame_details(outputStream* ss) const {
+ 460   streamIndentor si(ss);
+ 461   if (_type.is_valid() &amp;&amp; _type.frame() != NULL) {
+ 462     ss-&gt;indent().print_cr("Current Frame:");
+ 463     streamIndentor si2(ss);
+ 464     _type.frame()-&gt;print_on(ss);
+ 465   }
+ 466   if (_expected.is_valid() &amp;&amp; _expected.frame() != NULL) {
+ 467     ss-&gt;indent().print_cr("Stackmap Frame:");
+ 468     streamIndentor si2(ss);
+ 469     _expected.frame()-&gt;print_on(ss);
+ 470   }
+ 471 }
+ 472 
+ 473 void ErrorContext::bytecode_details(outputStream* ss, const Method* method) const {
+ 474   if (method != NULL) {
+ 475     streamIndentor si(ss);
+ 476     ss-&gt;indent().print_cr("Bytecode:");
+ 477     streamIndentor si2(ss);
+ 478     ss-&gt;print_data(method-&gt;code_base(), method-&gt;code_size(), false);
+ 479   }
+ 480 }
+ 481 
+ 482 void ErrorContext::handler_details(outputStream* ss, const Method* method) const {
+ 483   if (method != NULL) {
+ 484     streamIndentor si(ss);
+ 485     ExceptionTable table(method);
+ 486     if (table.length() &gt; 0) {
+ 487       ss-&gt;indent().print_cr("Exception Handler Table:");
+ 488       streamIndentor si2(ss);
+ 489       for (int i = 0; i &lt; table.length(); ++i) {
+ 490         ss-&gt;indent().print_cr("bci [%d, %d] =&gt; handler: %d", table.start_pc(i),
+ 491             table.end_pc(i), table.handler_pc(i));
+ 492       }
+ 493     }
+ 494   }
+ 495 }
+ 496 
+ 497 void ErrorContext::stackmap_details(outputStream* ss, const Method* method) const {
+ 498   if (method != NULL &amp;&amp; method-&gt;has_stackmap_table()) {
+ 499     streamIndentor si(ss);
+ 500     ss-&gt;indent().print_cr("Stackmap Table:");
+ 501     Array&lt;u1&gt;* data = method-&gt;stackmap_data();
+ 502     stack_map_table* sm_table =
+ 503         stack_map_table::at((address)data-&gt;adr_at(0));
+ 504     stack_map_frame* sm_frame = sm_table-&gt;entries();
+ 505     streamIndentor si2(ss);
+ 506     int current_offset = -1;
+ 507     for (u2 i = 0; i &lt; sm_table-&gt;number_of_entries(); ++i) {
+ 508       ss-&gt;indent();
+ 509       sm_frame-&gt;print_on(ss, current_offset);
+ 510       ss-&gt;print_cr("");
+ 511       current_offset += sm_frame-&gt;offset_delta();
+ 512       sm_frame = sm_frame-&gt;next();
+ 513     }
+ 514   }
+ 515 }
+ 516 
+ 517 // Methods in ClassVerifier
+ 518 
+ 519 ClassVerifier::ClassVerifier(
+ 520     instanceKlassHandle klass, TRAPS)
+ 521     : _thread(THREAD), _exception_type(NULL), _message(NULL), _klass(klass) {
+ 522   _this_type = VerificationType::reference_type(klass-&gt;name());
+ 523   // Create list to hold symbols in reference area.
+ 524   _symbols = new GrowableArray&lt;Symbol*&gt;(100, 0, NULL);
+ 525 }
+ 526 
+ 527 ClassVerifier::~ClassVerifier() {
+ 528   // Decrement the reference count for any symbols created.
+ 529   for (int i = 0; i &lt; _symbols-&gt;length(); i++) {
+ 530     Symbol* s = _symbols-&gt;at(i);
+ 531     s-&gt;decrement_refcount();
+ 532   }
+ 533 }
+ 534 
+ 535 VerificationType ClassVerifier::object_type() const {
+ 536   return VerificationType::reference_type(vmSymbols::java_lang_Object());
+ 537 }
+ 538 
+ 539 TypeOrigin ClassVerifier::ref_ctx(const char* sig, TRAPS) {
+ 540   VerificationType vt = VerificationType::reference_type(
+ 541       create_temporary_symbol(sig, (int)strlen(sig), THREAD));
+ 542   return TypeOrigin::implicit(vt);
+ 543 }
+ 544 
+ 545 void ClassVerifier::verify_class(TRAPS) {
+ 546   if (VerboseVerification) {
+ 547     tty-&gt;print_cr("Verifying class %s with new format",
+ 548       _klass-&gt;external_name());
+ 549   }
+ 550 
+ 551   Array&lt;Method*&gt;* methods = _klass-&gt;methods();
+ 552   int num_methods = methods-&gt;length();
+ 553 
+ 554   for (int index = 0; index &lt; num_methods; index++) {
+ 555     // Check for recursive re-verification before each method.
+ 556     if (was_recursively_verified())  return;
+ 557 
+ 558     Method* m = methods-&gt;at(index);
+ 559     if (m-&gt;is_native() || m-&gt;is_abstract() || m-&gt;is_overpass()) {
+ 560       // If m is native or abstract, skip it.  It is checked in class file
+ 561       // parser that methods do not override a final method.  Overpass methods
+ 562       // are trusted since the VM generates them.
+ 563       continue;
+ 564     }
+ 565     verify_method(methodHandle(THREAD, m), CHECK_VERIFY(this));
+ 566   }
+ 567 
+ 568   if (VerboseVerification || TraceClassInitialization) {
+ 569     if (was_recursively_verified())
+ 570       tty-&gt;print_cr("Recursive verification detected for: %s",
+ 571           _klass-&gt;external_name());
+ 572   }
+ 573 }
+ 574 
+ 575 void ClassVerifier::verify_method(methodHandle m, TRAPS) {
+ 576   HandleMark hm(THREAD);
+ 577   _method = m;   // initialize _method
+ 578   if (VerboseVerification) {
+ 579     tty-&gt;print_cr("Verifying method %s", m-&gt;name_and_sig_as_C_string());
+ 580   }
+ 581 
+ 582   const char* bad_type_msg = "Bad type on operand stack in %s";
+ 583 
+ 584   int32_t max_stack = m-&gt;verifier_max_stack();
+ 585   int32_t max_locals = m-&gt;max_locals();
+ 586   constantPoolHandle cp(THREAD, m-&gt;constants());
+ 587 
+ 588   if (!SignatureVerifier::is_valid_method_signature(m-&gt;signature())) {
+ 589     class_format_error("Invalid method signature");
+ 590     return;
+ 591   }
+ 592 
+ 593   // Initial stack map frame: offset is 0, stack is initially empty.
+ 594   StackMapFrame current_frame(max_locals, max_stack, this);
+ 595   // Set initial locals
+ 596   VerificationType return_type = current_frame.set_locals_from_arg(
+ 597     m, current_type(), CHECK_VERIFY(this));
+ 598 
+ 599   int32_t stackmap_index = 0; // index to the stackmap array
+ 600 
+ 601   u4 code_length = m-&gt;code_size();
+ 602 
+ 603   // Scan the bytecode and map each instruction's start offset to a number.
+ 604   char* code_data = generate_code_data(m, code_length, CHECK_VERIFY(this));
+ 605 
+ 606   int ex_min = code_length;
+ 607   int ex_max = -1;
+ 608   // Look through each item on the exception table. Each of the fields must refer
+ 609   // to a legal instruction.
+ 610   verify_exception_handler_table(
+ 611     code_length, code_data, ex_min, ex_max, CHECK_VERIFY(this));
+ 612 
+ 613   // Look through each entry on the local variable table and make sure
+ 614   // its range of code array offsets is valid. (4169817)
+ 615   if (m-&gt;has_localvariable_table()) {
+ 616     verify_local_variable_table(code_length, code_data, CHECK_VERIFY(this));
+ 617   }
+ 618 
+ 619   Array&lt;u1&gt;* stackmap_data = m-&gt;stackmap_data();
+ 620   StackMapStream stream(stackmap_data);
+ 621   StackMapReader reader(this, &amp;stream, code_data, code_length, THREAD);
+ 622   StackMapTable stackmap_table(&amp;reader, &amp;current_frame, max_locals, max_stack,
+ 623                                code_data, code_length, CHECK_VERIFY(this));
+ 624 
+ 625   if (VerboseVerification) {
+ 626     stackmap_table.print_on(tty);
+ 627   }
+ 628 
+ 629   RawBytecodeStream bcs(m);
+ 630 
+ 631   // Scan the byte code linearly from the start to the end
+ 632   bool no_control_flow = false; // Set to true when there is no direct control
+ 633                                 // flow from current instruction to the next
+ 634                                 // instruction in sequence
+ 635   Bytecodes::Code opcode;
+ 636   while (!bcs.is_last_bytecode()) {
+ 637     // Check for recursive re-verification before each bytecode.
+ 638     if (was_recursively_verified())  return;
+ 639 
+ 640     opcode = bcs.raw_next();
+ 641     u2 bci = bcs.bci();
+ 642 
+ 643     // Set current frame's offset to bci
+ 644     current_frame.set_offset(bci);
+ 645     current_frame.set_mark();
+ 646 
+ 647     // Make sure every offset in stackmap table point to the beginning to
+ 648     // an instruction. Match current_frame to stackmap_table entry with
+ 649     // the same offset if exists.
+ 650     stackmap_index = verify_stackmap_table(
+ 651       stackmap_index, bci, &amp;current_frame, &amp;stackmap_table,
+ 652       no_control_flow, CHECK_VERIFY(this));
+ 653 
+ 654 
+ 655     bool this_uninit = false;  // Set to true when invokespecial &lt;init&gt; initialized 'this'
+ 656 
+ 657     // Merge with the next instruction
+ 658     {
+ 659       u2 index;
+ 660       int target;
+ 661       VerificationType type, type2;
+ 662       VerificationType atype;
+ 663 
+ 664 #ifndef PRODUCT
+ 665       if (VerboseVerification) {
+ 666         current_frame.print_on(tty);
+ 667         tty-&gt;print_cr("offset = %d,  opcode = %s", bci, Bytecodes::name(opcode));
+ 668       }
+ 669 #endif
+ 670 
+ 671       // Make sure wide instruction is in correct format
+ 672       if (bcs.is_wide()) {
+ 673         if (opcode != Bytecodes::_iinc   &amp;&amp; opcode != Bytecodes::_iload  &amp;&amp;
+ 674             opcode != Bytecodes::_aload  &amp;&amp; opcode != Bytecodes::_lload  &amp;&amp;
+ 675             opcode != Bytecodes::_istore &amp;&amp; opcode != Bytecodes::_astore &amp;&amp;
+ 676             opcode != Bytecodes::_lstore &amp;&amp; opcode != Bytecodes::_fload  &amp;&amp;
+ 677             opcode != Bytecodes::_dload  &amp;&amp; opcode != Bytecodes::_fstore &amp;&amp;
+ 678             opcode != Bytecodes::_dstore) {
+ 679           /* Unreachable?  RawBytecodeStream's raw_next() returns 'illegal'
+ 680            * if we encounter a wide instruction that modifies an invalid
+ 681            * opcode (not one of the ones listed above) */
+ 682           verify_error(ErrorContext::bad_code(bci), "Bad wide instruction");
+ 683           return;
+ 684         }
+ 685       }
+ 686 
+ 687       switch (opcode) {
+ 688         case Bytecodes::_nop :
+ 689           no_control_flow = false; break;
+ 690         case Bytecodes::_aconst_null :
+ 691           current_frame.push_stack(
+ 692             VerificationType::null_type(), CHECK_VERIFY(this));
+ 693           no_control_flow = false; break;
+ 694         case Bytecodes::_iconst_m1 :
+ 695         case Bytecodes::_iconst_0 :
+ 696         case Bytecodes::_iconst_1 :
+ 697         case Bytecodes::_iconst_2 :
+ 698         case Bytecodes::_iconst_3 :
+ 699         case Bytecodes::_iconst_4 :
+ 700         case Bytecodes::_iconst_5 :
+ 701           current_frame.push_stack(
+ 702             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 703           no_control_flow = false; break;
+ 704         case Bytecodes::_lconst_0 :
+ 705         case Bytecodes::_lconst_1 :
+ 706           current_frame.push_stack_2(
+ 707             VerificationType::long_type(),
+ 708             VerificationType::long2_type(), CHECK_VERIFY(this));
+ 709           no_control_flow = false; break;
+ 710         case Bytecodes::_fconst_0 :
+ 711         case Bytecodes::_fconst_1 :
+ 712         case Bytecodes::_fconst_2 :
+ 713           current_frame.push_stack(
+ 714             VerificationType::float_type(), CHECK_VERIFY(this));
+ 715           no_control_flow = false; break;
+ 716         case Bytecodes::_dconst_0 :
+ 717         case Bytecodes::_dconst_1 :
+ 718           current_frame.push_stack_2(
+ 719             VerificationType::double_type(),
+ 720             VerificationType::double2_type(), CHECK_VERIFY(this));
+ 721           no_control_flow = false; break;
+ 722         case Bytecodes::_sipush :
+ 723         case Bytecodes::_bipush :
+ 724           current_frame.push_stack(
+ 725             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 726           no_control_flow = false; break;
+ 727         case Bytecodes::_ldc :
+ 728           verify_ldc(
+ 729             opcode, bcs.get_index_u1(), &amp;current_frame,
+ 730             cp, bci, CHECK_VERIFY(this));
+ 731           no_control_flow = false; break;
+ 732         case Bytecodes::_ldc_w :
+ 733         case Bytecodes::_ldc2_w :
+ 734           verify_ldc(
+ 735             opcode, bcs.get_index_u2(), &amp;current_frame,
+ 736             cp, bci, CHECK_VERIFY(this));
+ 737           no_control_flow = false; break;
+ 738         case Bytecodes::_iload :
+ 739           verify_iload(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 740           no_control_flow = false; break;
+ 741         case Bytecodes::_iload_0 :
+ 742         case Bytecodes::_iload_1 :
+ 743         case Bytecodes::_iload_2 :
+ 744         case Bytecodes::_iload_3 :
+ 745           index = opcode - Bytecodes::_iload_0;
+ 746           verify_iload(index, &amp;current_frame, CHECK_VERIFY(this));
+ 747           no_control_flow = false; break;
+ 748         case Bytecodes::_lload :
+ 749           verify_lload(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 750           no_control_flow = false; break;
+ 751         case Bytecodes::_lload_0 :
+ 752         case Bytecodes::_lload_1 :
+ 753         case Bytecodes::_lload_2 :
+ 754         case Bytecodes::_lload_3 :
+ 755           index = opcode - Bytecodes::_lload_0;
+ 756           verify_lload(index, &amp;current_frame, CHECK_VERIFY(this));
+ 757           no_control_flow = false; break;
+ 758         case Bytecodes::_fload :
+ 759           verify_fload(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 760           no_control_flow = false; break;
+ 761         case Bytecodes::_fload_0 :
+ 762         case Bytecodes::_fload_1 :
+ 763         case Bytecodes::_fload_2 :
+ 764         case Bytecodes::_fload_3 :
+ 765           index = opcode - Bytecodes::_fload_0;
+ 766           verify_fload(index, &amp;current_frame, CHECK_VERIFY(this));
+ 767           no_control_flow = false; break;
+ 768         case Bytecodes::_dload :
+ 769           verify_dload(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 770           no_control_flow = false; break;
+ 771         case Bytecodes::_dload_0 :
+ 772         case Bytecodes::_dload_1 :
+ 773         case Bytecodes::_dload_2 :
+ 774         case Bytecodes::_dload_3 :
+ 775           index = opcode - Bytecodes::_dload_0;
+ 776           verify_dload(index, &amp;current_frame, CHECK_VERIFY(this));
+ 777           no_control_flow = false; break;
+ 778         case Bytecodes::_aload :
+ 779           verify_aload(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 780           no_control_flow = false; break;
+ 781         case Bytecodes::_aload_0 :
+ 782         case Bytecodes::_aload_1 :
+ 783         case Bytecodes::_aload_2 :
+ 784         case Bytecodes::_aload_3 :
+ 785           index = opcode - Bytecodes::_aload_0;
+ 786           verify_aload(index, &amp;current_frame, CHECK_VERIFY(this));
+ 787           no_control_flow = false; break;
+ 788         case Bytecodes::_iaload :
+ 789           type = current_frame.pop_stack(
+ 790             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 791           atype = current_frame.pop_stack(
+ 792             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 793           if (!atype.is_int_array()) {
+ 794             verify_error(ErrorContext::bad_type(bci,
+ 795                 current_frame.stack_top_ctx(), ref_ctx("[I", THREAD)),
+ 796                 bad_type_msg, "iaload");
+ 797             return;
+ 798           }
+ 799           current_frame.push_stack(
+ 800             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 801           no_control_flow = false; break;
+ 802         case Bytecodes::_baload :
+ 803           type = current_frame.pop_stack(
+ 804             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 805           atype = current_frame.pop_stack(
+ 806             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 807           if (!atype.is_bool_array() &amp;&amp; !atype.is_byte_array()) {
+ 808             verify_error(
+ 809                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+ 810                 bad_type_msg, "baload");
+ 811             return;
+ 812           }
+ 813           current_frame.push_stack(
+ 814             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 815           no_control_flow = false; break;
+ 816         case Bytecodes::_caload :
+ 817           type = current_frame.pop_stack(
+ 818             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 819           atype = current_frame.pop_stack(
+ 820             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 821           if (!atype.is_char_array()) {
+ 822             verify_error(ErrorContext::bad_type(bci,
+ 823                 current_frame.stack_top_ctx(), ref_ctx("[C", THREAD)),
+ 824                 bad_type_msg, "caload");
+ 825             return;
+ 826           }
+ 827           current_frame.push_stack(
+ 828             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 829           no_control_flow = false; break;
+ 830         case Bytecodes::_saload :
+ 831           type = current_frame.pop_stack(
+ 832             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 833           atype = current_frame.pop_stack(
+ 834             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 835           if (!atype.is_short_array()) {
+ 836             verify_error(ErrorContext::bad_type(bci,
+ 837                 current_frame.stack_top_ctx(), ref_ctx("[S", THREAD)),
+ 838                 bad_type_msg, "saload");
+ 839             return;
+ 840           }
+ 841           current_frame.push_stack(
+ 842             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 843           no_control_flow = false; break;
+ 844         case Bytecodes::_laload :
+ 845           type = current_frame.pop_stack(
+ 846             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 847           atype = current_frame.pop_stack(
+ 848             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 849           if (!atype.is_long_array()) {
+ 850             verify_error(ErrorContext::bad_type(bci,
+ 851                 current_frame.stack_top_ctx(), ref_ctx("[J", THREAD)),
+ 852                 bad_type_msg, "laload");
+ 853             return;
+ 854           }
+ 855           current_frame.push_stack_2(
+ 856             VerificationType::long_type(),
+ 857             VerificationType::long2_type(), CHECK_VERIFY(this));
+ 858           no_control_flow = false; break;
+ 859         case Bytecodes::_faload :
+ 860           type = current_frame.pop_stack(
+ 861             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 862           atype = current_frame.pop_stack(
+ 863             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 864           if (!atype.is_float_array()) {
+ 865             verify_error(ErrorContext::bad_type(bci,
+ 866                 current_frame.stack_top_ctx(), ref_ctx("[F", THREAD)),
+ 867                 bad_type_msg, "faload");
+ 868             return;
+ 869           }
+ 870           current_frame.push_stack(
+ 871             VerificationType::float_type(), CHECK_VERIFY(this));
+ 872           no_control_flow = false; break;
+ 873         case Bytecodes::_daload :
+ 874           type = current_frame.pop_stack(
+ 875             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 876           atype = current_frame.pop_stack(
+ 877             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 878           if (!atype.is_double_array()) {
+ 879             verify_error(ErrorContext::bad_type(bci,
+ 880                 current_frame.stack_top_ctx(), ref_ctx("[D", THREAD)),
+ 881                 bad_type_msg, "daload");
+ 882             return;
+ 883           }
+ 884           current_frame.push_stack_2(
+ 885             VerificationType::double_type(),
+ 886             VerificationType::double2_type(), CHECK_VERIFY(this));
+ 887           no_control_flow = false; break;
+ 888         case Bytecodes::_aaload : {
+ 889           type = current_frame.pop_stack(
+ 890             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 891           atype = current_frame.pop_stack(
+ 892             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 893           if (!atype.is_reference_array()) {
+ 894             verify_error(ErrorContext::bad_type(bci,
+ 895                 current_frame.stack_top_ctx(),
+ 896                 TypeOrigin::implicit(VerificationType::reference_check())),
+ 897                 bad_type_msg, "aaload");
+ 898             return;
+ 899           }
+ 900           if (atype.is_null()) {
+ 901             current_frame.push_stack(
+ 902               VerificationType::null_type(), CHECK_VERIFY(this));
+ 903           } else {
+ 904             VerificationType component =
+ 905               atype.get_component(this, CHECK_VERIFY(this));
+ 906             current_frame.push_stack(component, CHECK_VERIFY(this));
+ 907           }
+ 908           no_control_flow = false; break;
+ 909         }
+ 910         case Bytecodes::_istore :
+ 911           verify_istore(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 912           no_control_flow = false; break;
+ 913         case Bytecodes::_istore_0 :
+ 914         case Bytecodes::_istore_1 :
+ 915         case Bytecodes::_istore_2 :
+ 916         case Bytecodes::_istore_3 :
+ 917           index = opcode - Bytecodes::_istore_0;
+ 918           verify_istore(index, &amp;current_frame, CHECK_VERIFY(this));
+ 919           no_control_flow = false; break;
+ 920         case Bytecodes::_lstore :
+ 921           verify_lstore(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 922           no_control_flow = false; break;
+ 923         case Bytecodes::_lstore_0 :
+ 924         case Bytecodes::_lstore_1 :
+ 925         case Bytecodes::_lstore_2 :
+ 926         case Bytecodes::_lstore_3 :
+ 927           index = opcode - Bytecodes::_lstore_0;
+ 928           verify_lstore(index, &amp;current_frame, CHECK_VERIFY(this));
+ 929           no_control_flow = false; break;
+ 930         case Bytecodes::_fstore :
+ 931           verify_fstore(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 932           no_control_flow = false; break;
+ 933         case Bytecodes::_fstore_0 :
+ 934         case Bytecodes::_fstore_1 :
+ 935         case Bytecodes::_fstore_2 :
+ 936         case Bytecodes::_fstore_3 :
+ 937           index = opcode - Bytecodes::_fstore_0;
+ 938           verify_fstore(index, &amp;current_frame, CHECK_VERIFY(this));
+ 939           no_control_flow = false; break;
+ 940         case Bytecodes::_dstore :
+ 941           verify_dstore(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 942           no_control_flow = false; break;
+ 943         case Bytecodes::_dstore_0 :
+ 944         case Bytecodes::_dstore_1 :
+ 945         case Bytecodes::_dstore_2 :
+ 946         case Bytecodes::_dstore_3 :
+ 947           index = opcode - Bytecodes::_dstore_0;
+ 948           verify_dstore(index, &amp;current_frame, CHECK_VERIFY(this));
+ 949           no_control_flow = false; break;
+ 950         case Bytecodes::_astore :
+ 951           verify_astore(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+ 952           no_control_flow = false; break;
+ 953         case Bytecodes::_astore_0 :
+ 954         case Bytecodes::_astore_1 :
+ 955         case Bytecodes::_astore_2 :
+ 956         case Bytecodes::_astore_3 :
+ 957           index = opcode - Bytecodes::_astore_0;
+ 958           verify_astore(index, &amp;current_frame, CHECK_VERIFY(this));
+ 959           no_control_flow = false; break;
+ 960         case Bytecodes::_iastore :
+ 961           type = current_frame.pop_stack(
+ 962             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 963           type2 = current_frame.pop_stack(
+ 964             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 965           atype = current_frame.pop_stack(
+ 966             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 967           if (!atype.is_int_array()) {
+ 968             verify_error(ErrorContext::bad_type(bci,
+ 969                 current_frame.stack_top_ctx(), ref_ctx("[I", THREAD)),
+ 970                 bad_type_msg, "iastore");
+ 971             return;
+ 972           }
+ 973           no_control_flow = false; break;
+ 974         case Bytecodes::_bastore :
+ 975           type = current_frame.pop_stack(
+ 976             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 977           type2 = current_frame.pop_stack(
+ 978             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 979           atype = current_frame.pop_stack(
+ 980             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 981           if (!atype.is_bool_array() &amp;&amp; !atype.is_byte_array()) {
+ 982             verify_error(
+ 983                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+ 984                 bad_type_msg, "bastore");
+ 985             return;
+ 986           }
+ 987           no_control_flow = false; break;
+ 988         case Bytecodes::_castore :
+ 989           current_frame.pop_stack(
+ 990             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 991           current_frame.pop_stack(
+ 992             VerificationType::integer_type(), CHECK_VERIFY(this));
+ 993           atype = current_frame.pop_stack(
+ 994             VerificationType::reference_check(), CHECK_VERIFY(this));
+ 995           if (!atype.is_char_array()) {
+ 996             verify_error(ErrorContext::bad_type(bci,
+ 997                 current_frame.stack_top_ctx(), ref_ctx("[C", THREAD)),
+ 998                 bad_type_msg, "castore");
+ 999             return;
+1000           }
+1001           no_control_flow = false; break;
+1002         case Bytecodes::_sastore :
+1003           current_frame.pop_stack(
+1004             VerificationType::integer_type(), CHECK_VERIFY(this));
+1005           current_frame.pop_stack(
+1006             VerificationType::integer_type(), CHECK_VERIFY(this));
+1007           atype = current_frame.pop_stack(
+1008             VerificationType::reference_check(), CHECK_VERIFY(this));
+1009           if (!atype.is_short_array()) {
+1010             verify_error(ErrorContext::bad_type(bci,
+1011                 current_frame.stack_top_ctx(), ref_ctx("[S", THREAD)),
+1012                 bad_type_msg, "sastore");
+1013             return;
+1014           }
+1015           no_control_flow = false; break;
+1016         case Bytecodes::_lastore :
+1017           current_frame.pop_stack_2(
+1018             VerificationType::long2_type(),
+1019             VerificationType::long_type(), CHECK_VERIFY(this));
+1020           current_frame.pop_stack(
+1021             VerificationType::integer_type(), CHECK_VERIFY(this));
+1022           atype = current_frame.pop_stack(
+1023             VerificationType::reference_check(), CHECK_VERIFY(this));
+1024           if (!atype.is_long_array()) {
+1025             verify_error(ErrorContext::bad_type(bci,
+1026                 current_frame.stack_top_ctx(), ref_ctx("[J", THREAD)),
+1027                 bad_type_msg, "lastore");
+1028             return;
+1029           }
+1030           no_control_flow = false; break;
+1031         case Bytecodes::_fastore :
+1032           current_frame.pop_stack(
+1033             VerificationType::float_type(), CHECK_VERIFY(this));
+1034           current_frame.pop_stack
+1035             (VerificationType::integer_type(), CHECK_VERIFY(this));
+1036           atype = current_frame.pop_stack(
+1037             VerificationType::reference_check(), CHECK_VERIFY(this));
+1038           if (!atype.is_float_array()) {
+1039             verify_error(ErrorContext::bad_type(bci,
+1040                 current_frame.stack_top_ctx(), ref_ctx("[F", THREAD)),
+1041                 bad_type_msg, "fastore");
+1042             return;
+1043           }
+1044           no_control_flow = false; break;
+1045         case Bytecodes::_dastore :
+1046           current_frame.pop_stack_2(
+1047             VerificationType::double2_type(),
+1048             VerificationType::double_type(), CHECK_VERIFY(this));
+1049           current_frame.pop_stack(
+1050             VerificationType::integer_type(), CHECK_VERIFY(this));
+1051           atype = current_frame.pop_stack(
+1052             VerificationType::reference_check(), CHECK_VERIFY(this));
+1053           if (!atype.is_double_array()) {
+1054             verify_error(ErrorContext::bad_type(bci,
+1055                 current_frame.stack_top_ctx(), ref_ctx("[D", THREAD)),
+1056                 bad_type_msg, "dastore");
+1057             return;
+1058           }
+1059           no_control_flow = false; break;
+1060         case Bytecodes::_aastore :
+1061           type = current_frame.pop_stack(object_type(), CHECK_VERIFY(this));
+1062           type2 = current_frame.pop_stack(
+1063             VerificationType::integer_type(), CHECK_VERIFY(this));
+1064           atype = current_frame.pop_stack(
+1065             VerificationType::reference_check(), CHECK_VERIFY(this));
+1066           // more type-checking is done at runtime
+1067           if (!atype.is_reference_array()) {
+1068             verify_error(ErrorContext::bad_type(bci,
+1069                 current_frame.stack_top_ctx(),
+1070                 TypeOrigin::implicit(VerificationType::reference_check())),
+1071                 bad_type_msg, "aastore");
+1072             return;
+1073           }
+1074           // 4938384: relaxed constraint in JVMS 3nd edition.
+1075           no_control_flow = false; break;
+1076         case Bytecodes::_pop :
+1077           current_frame.pop_stack(
+1078             VerificationType::category1_check(), CHECK_VERIFY(this));
+1079           no_control_flow = false; break;
+1080         case Bytecodes::_pop2 :
+1081           type = current_frame.pop_stack(CHECK_VERIFY(this));
+1082           if (type.is_category1()) {
+1083             current_frame.pop_stack(
+1084               VerificationType::category1_check(), CHECK_VERIFY(this));
+1085           } else if (type.is_category2_2nd()) {
+1086             current_frame.pop_stack(
+1087               VerificationType::category2_check(), CHECK_VERIFY(this));
+1088           } else {
+1089             /* Unreachable? Would need a category2_1st on TOS
+1090              * which does not appear possible. */
+1091             verify_error(
+1092                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+1093                 bad_type_msg, "pop2");
+1094             return;
+1095           }
+1096           no_control_flow = false; break;
+1097         case Bytecodes::_dup :
+1098           type = current_frame.pop_stack(
+1099             VerificationType::category1_check(), CHECK_VERIFY(this));
+1100           current_frame.push_stack(type, CHECK_VERIFY(this));
+1101           current_frame.push_stack(type, CHECK_VERIFY(this));
+1102           no_control_flow = false; break;
+1103         case Bytecodes::_dup_x1 :
+1104           type = current_frame.pop_stack(
+1105             VerificationType::category1_check(), CHECK_VERIFY(this));
+1106           type2 = current_frame.pop_stack(
+1107             VerificationType::category1_check(), CHECK_VERIFY(this));
+1108           current_frame.push_stack(type, CHECK_VERIFY(this));
+1109           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1110           current_frame.push_stack(type, CHECK_VERIFY(this));
+1111           no_control_flow = false; break;
+1112         case Bytecodes::_dup_x2 :
+1113         {
+1114           VerificationType type3;
+1115           type = current_frame.pop_stack(
+1116             VerificationType::category1_check(), CHECK_VERIFY(this));
+1117           type2 = current_frame.pop_stack(CHECK_VERIFY(this));
+1118           if (type2.is_category1()) {
+1119             type3 = current_frame.pop_stack(
+1120               VerificationType::category1_check(), CHECK_VERIFY(this));
+1121           } else if (type2.is_category2_2nd()) {
+1122             type3 = current_frame.pop_stack(
+1123               VerificationType::category2_check(), CHECK_VERIFY(this));
+1124           } else {
+1125             /* Unreachable? Would need a category2_1st at stack depth 2 with
+1126              * a category1 on TOS which does not appear possible. */
+1127             verify_error(ErrorContext::bad_type(
+1128                 bci, current_frame.stack_top_ctx()), bad_type_msg, "dup_x2");
+1129             return;
+1130           }
+1131           current_frame.push_stack(type, CHECK_VERIFY(this));
+1132           current_frame.push_stack(type3, CHECK_VERIFY(this));
+1133           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1134           current_frame.push_stack(type, CHECK_VERIFY(this));
+1135           no_control_flow = false; break;
+1136         }
+1137         case Bytecodes::_dup2 :
+1138           type = current_frame.pop_stack(CHECK_VERIFY(this));
+1139           if (type.is_category1()) {
+1140             type2 = current_frame.pop_stack(
+1141               VerificationType::category1_check(), CHECK_VERIFY(this));
+1142           } else if (type.is_category2_2nd()) {
+1143             type2 = current_frame.pop_stack(
+1144               VerificationType::category2_check(), CHECK_VERIFY(this));
+1145           } else {
+1146             /* Unreachable?  Would need a category2_1st on TOS which does not
+1147              * appear possible. */
+1148             verify_error(
+1149                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+1150                 bad_type_msg, "dup2");
+1151             return;
+1152           }
+1153           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1154           current_frame.push_stack(type, CHECK_VERIFY(this));
+1155           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1156           current_frame.push_stack(type, CHECK_VERIFY(this));
+1157           no_control_flow = false; break;
+1158         case Bytecodes::_dup2_x1 :
+1159         {
+1160           VerificationType type3;
+1161           type = current_frame.pop_stack(CHECK_VERIFY(this));
+1162           if (type.is_category1()) {
+1163             type2 = current_frame.pop_stack(
+1164               VerificationType::category1_check(), CHECK_VERIFY(this));
+1165           } else if (type.is_category2_2nd()) {
+1166             type2 = current_frame.pop_stack(
+1167               VerificationType::category2_check(), CHECK_VERIFY(this));
+1168           } else {
+1169             /* Unreachable?  Would need a category2_1st on TOS which does
+1170              * not appear possible. */
+1171             verify_error(
+1172                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+1173                 bad_type_msg, "dup2_x1");
+1174             return;
+1175           }
+1176           type3 = current_frame.pop_stack(
+1177             VerificationType::category1_check(), CHECK_VERIFY(this));
+1178           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1179           current_frame.push_stack(type, CHECK_VERIFY(this));
+1180           current_frame.push_stack(type3, CHECK_VERIFY(this));
+1181           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1182           current_frame.push_stack(type, CHECK_VERIFY(this));
+1183           no_control_flow = false; break;
+1184         }
+1185         case Bytecodes::_dup2_x2 :
+1186         {
+1187           VerificationType type3, type4;
+1188           type = current_frame.pop_stack(CHECK_VERIFY(this));
+1189           if (type.is_category1()) {
+1190             type2 = current_frame.pop_stack(
+1191               VerificationType::category1_check(), CHECK_VERIFY(this));
+1192           } else if (type.is_category2_2nd()) {
+1193             type2 = current_frame.pop_stack(
+1194               VerificationType::category2_check(), CHECK_VERIFY(this));
+1195           } else {
+1196             /* Unreachable?  Would need a category2_1st on TOS which does
+1197              * not appear possible. */
+1198             verify_error(
+1199                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+1200                 bad_type_msg, "dup2_x2");
+1201             return;
+1202           }
+1203           type3 = current_frame.pop_stack(CHECK_VERIFY(this));
+1204           if (type3.is_category1()) {
+1205             type4 = current_frame.pop_stack(
+1206               VerificationType::category1_check(), CHECK_VERIFY(this));
+1207           } else if (type3.is_category2_2nd()) {
+1208             type4 = current_frame.pop_stack(
+1209               VerificationType::category2_check(), CHECK_VERIFY(this));
+1210           } else {
+1211             /* Unreachable?  Would need a category2_1st on TOS after popping
+1212              * a long/double or two category 1's, which does not
+1213              * appear possible. */
+1214             verify_error(
+1215                 ErrorContext::bad_type(bci, current_frame.stack_top_ctx()),
+1216                 bad_type_msg, "dup2_x2");
+1217             return;
+1218           }
+1219           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1220           current_frame.push_stack(type, CHECK_VERIFY(this));
+1221           current_frame.push_stack(type4, CHECK_VERIFY(this));
+1222           current_frame.push_stack(type3, CHECK_VERIFY(this));
+1223           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1224           current_frame.push_stack(type, CHECK_VERIFY(this));
+1225           no_control_flow = false; break;
+1226         }
+1227         case Bytecodes::_swap :
+1228           type = current_frame.pop_stack(
+1229             VerificationType::category1_check(), CHECK_VERIFY(this));
+1230           type2 = current_frame.pop_stack(
+1231             VerificationType::category1_check(), CHECK_VERIFY(this));
+1232           current_frame.push_stack(type, CHECK_VERIFY(this));
+1233           current_frame.push_stack(type2, CHECK_VERIFY(this));
+1234           no_control_flow = false; break;
+1235         case Bytecodes::_iadd :
+1236         case Bytecodes::_isub :
+1237         case Bytecodes::_imul :
+1238         case Bytecodes::_idiv :
+1239         case Bytecodes::_irem :
+1240         case Bytecodes::_ishl :
+1241         case Bytecodes::_ishr :
+1242         case Bytecodes::_iushr :
+1243         case Bytecodes::_ior :
+1244         case Bytecodes::_ixor :
+1245         case Bytecodes::_iand :
+1246           current_frame.pop_stack(
+1247             VerificationType::integer_type(), CHECK_VERIFY(this));
+1248           // fall through
+1249         case Bytecodes::_ineg :
+1250           current_frame.pop_stack(
+1251             VerificationType::integer_type(), CHECK_VERIFY(this));
+1252           current_frame.push_stack(
+1253             VerificationType::integer_type(), CHECK_VERIFY(this));
+1254           no_control_flow = false; break;
+1255         case Bytecodes::_ladd :
+1256         case Bytecodes::_lsub :
+1257         case Bytecodes::_lmul :
+1258         case Bytecodes::_ldiv :
+1259         case Bytecodes::_lrem :
+1260         case Bytecodes::_land :
+1261         case Bytecodes::_lor :
+1262         case Bytecodes::_lxor :
+1263           current_frame.pop_stack_2(
+1264             VerificationType::long2_type(),
+1265             VerificationType::long_type(), CHECK_VERIFY(this));
+1266           // fall through
+1267         case Bytecodes::_lneg :
+1268           current_frame.pop_stack_2(
+1269             VerificationType::long2_type(),
+1270             VerificationType::long_type(), CHECK_VERIFY(this));
+1271           current_frame.push_stack_2(
+1272             VerificationType::long_type(),
+1273             VerificationType::long2_type(), CHECK_VERIFY(this));
+1274           no_control_flow = false; break;
+1275         case Bytecodes::_lshl :
+1276         case Bytecodes::_lshr :
+1277         case Bytecodes::_lushr :
+1278           current_frame.pop_stack(
+1279             VerificationType::integer_type(), CHECK_VERIFY(this));
+1280           current_frame.pop_stack_2(
+1281             VerificationType::long2_type(),
+1282             VerificationType::long_type(), CHECK_VERIFY(this));
+1283           current_frame.push_stack_2(
+1284             VerificationType::long_type(),
+1285             VerificationType::long2_type(), CHECK_VERIFY(this));
+1286           no_control_flow = false; break;
+1287         case Bytecodes::_fadd :
+1288         case Bytecodes::_fsub :
+1289         case Bytecodes::_fmul :
+1290         case Bytecodes::_fdiv :
+1291         case Bytecodes::_frem :
+1292           current_frame.pop_stack(
+1293             VerificationType::float_type(), CHECK_VERIFY(this));
+1294           // fall through
+1295         case Bytecodes::_fneg :
+1296           current_frame.pop_stack(
+1297             VerificationType::float_type(), CHECK_VERIFY(this));
+1298           current_frame.push_stack(
+1299             VerificationType::float_type(), CHECK_VERIFY(this));
+1300           no_control_flow = false; break;
+1301         case Bytecodes::_dadd :
+1302         case Bytecodes::_dsub :
+1303         case Bytecodes::_dmul :
+1304         case Bytecodes::_ddiv :
+1305         case Bytecodes::_drem :
+1306           current_frame.pop_stack_2(
+1307             VerificationType::double2_type(),
+1308             VerificationType::double_type(), CHECK_VERIFY(this));
+1309           // fall through
+1310         case Bytecodes::_dneg :
+1311           current_frame.pop_stack_2(
+1312             VerificationType::double2_type(),
+1313             VerificationType::double_type(), CHECK_VERIFY(this));
+1314           current_frame.push_stack_2(
+1315             VerificationType::double_type(),
+1316             VerificationType::double2_type(), CHECK_VERIFY(this));
+1317           no_control_flow = false; break;
+1318         case Bytecodes::_iinc :
+1319           verify_iinc(bcs.get_index(), &amp;current_frame, CHECK_VERIFY(this));
+1320           no_control_flow = false; break;
+1321         case Bytecodes::_i2l :
+1322           type = current_frame.pop_stack(
+1323             VerificationType::integer_type(), CHECK_VERIFY(this));
+1324           current_frame.push_stack_2(
+1325             VerificationType::long_type(),
+1326             VerificationType::long2_type(), CHECK_VERIFY(this));
+1327           no_control_flow = false; break;
+1328        case Bytecodes::_l2i :
+1329           current_frame.pop_stack_2(
+1330             VerificationType::long2_type(),
+1331             VerificationType::long_type(), CHECK_VERIFY(this));
+1332           current_frame.push_stack(
+1333             VerificationType::integer_type(), CHECK_VERIFY(this));
+1334           no_control_flow = false; break;
+1335         case Bytecodes::_i2f :
+1336           current_frame.pop_stack(
+1337             VerificationType::integer_type(), CHECK_VERIFY(this));
+1338           current_frame.push_stack(
+1339             VerificationType::float_type(), CHECK_VERIFY(this));
+1340           no_control_flow = false; break;
+1341         case Bytecodes::_i2d :
+1342           current_frame.pop_stack(
+1343             VerificationType::integer_type(), CHECK_VERIFY(this));
+1344           current_frame.push_stack_2(
+1345             VerificationType::double_type(),
+1346             VerificationType::double2_type(), CHECK_VERIFY(this));
+1347           no_control_flow = false; break;
+1348         case Bytecodes::_l2f :
+1349           current_frame.pop_stack_2(
+1350             VerificationType::long2_type(),
+1351             VerificationType::long_type(), CHECK_VERIFY(this));
+1352           current_frame.push_stack(
+1353             VerificationType::float_type(), CHECK_VERIFY(this));
+1354           no_control_flow = false; break;
+1355         case Bytecodes::_l2d :
+1356           current_frame.pop_stack_2(
+1357             VerificationType::long2_type(),
+1358             VerificationType::long_type(), CHECK_VERIFY(this));
+1359           current_frame.push_stack_2(
+1360             VerificationType::double_type(),
+1361             VerificationType::double2_type(), CHECK_VERIFY(this));
+1362           no_control_flow = false; break;
+1363         case Bytecodes::_f2i :
+1364           current_frame.pop_stack(
+1365             VerificationType::float_type(), CHECK_VERIFY(this));
+1366           current_frame.push_stack(
+1367             VerificationType::integer_type(), CHECK_VERIFY(this));
+1368           no_control_flow = false; break;
+1369         case Bytecodes::_f2l :
+1370           current_frame.pop_stack(
+1371             VerificationType::float_type(), CHECK_VERIFY(this));
+1372           current_frame.push_stack_2(
+1373             VerificationType::long_type(),
+1374             VerificationType::long2_type(), CHECK_VERIFY(this));
+1375           no_control_flow = false; break;
+1376         case Bytecodes::_f2d :
+1377           current_frame.pop_stack(
+1378             VerificationType::float_type(), CHECK_VERIFY(this));
+1379           current_frame.push_stack_2(
+1380             VerificationType::double_type(),
+1381             VerificationType::double2_type(), CHECK_VERIFY(this));
+1382           no_control_flow = false; break;
+1383         case Bytecodes::_d2i :
+1384           current_frame.pop_stack_2(
+1385             VerificationType::double2_type(),
+1386             VerificationType::double_type(), CHECK_VERIFY(this));
+1387           current_frame.push_stack(
+1388             VerificationType::integer_type(), CHECK_VERIFY(this));
+1389           no_control_flow = false; break;
+1390         case Bytecodes::_d2l :
+1391           current_frame.pop_stack_2(
+1392             VerificationType::double2_type(),
+1393             VerificationType::double_type(), CHECK_VERIFY(this));
+1394           current_frame.push_stack_2(
+1395             VerificationType::long_type(),
+1396             VerificationType::long2_type(), CHECK_VERIFY(this));
+1397           no_control_flow = false; break;
+1398         case Bytecodes::_d2f :
+1399           current_frame.pop_stack_2(
+1400             VerificationType::double2_type(),
+1401             VerificationType::double_type(), CHECK_VERIFY(this));
+1402           current_frame.push_stack(
+1403             VerificationType::float_type(), CHECK_VERIFY(this));
+1404           no_control_flow = false; break;
+1405         case Bytecodes::_i2b :
+1406         case Bytecodes::_i2c :
+1407         case Bytecodes::_i2s :
+1408           current_frame.pop_stack(
+1409             VerificationType::integer_type(), CHECK_VERIFY(this));
+1410           current_frame.push_stack(
+1411             VerificationType::integer_type(), CHECK_VERIFY(this));
+1412           no_control_flow = false; break;
+1413         case Bytecodes::_lcmp :
+1414           current_frame.pop_stack_2(
+1415             VerificationType::long2_type(),
+1416             VerificationType::long_type(), CHECK_VERIFY(this));
+1417           current_frame.pop_stack_2(
+1418             VerificationType::long2_type(),
+1419             VerificationType::long_type(), CHECK_VERIFY(this));
+1420           current_frame.push_stack(
+1421             VerificationType::integer_type(), CHECK_VERIFY(this));
+1422           no_control_flow = false; break;
+1423         case Bytecodes::_fcmpl :
+1424         case Bytecodes::_fcmpg :
+1425           current_frame.pop_stack(
+1426             VerificationType::float_type(), CHECK_VERIFY(this));
+1427           current_frame.pop_stack(
+1428             VerificationType::float_type(), CHECK_VERIFY(this));
+1429           current_frame.push_stack(
+1430             VerificationType::integer_type(), CHECK_VERIFY(this));
+1431           no_control_flow = false; break;
+1432         case Bytecodes::_dcmpl :
+1433         case Bytecodes::_dcmpg :
+1434           current_frame.pop_stack_2(
+1435             VerificationType::double2_type(),
+1436             VerificationType::double_type(), CHECK_VERIFY(this));
+1437           current_frame.pop_stack_2(
+1438             VerificationType::double2_type(),
+1439             VerificationType::double_type(), CHECK_VERIFY(this));
+1440           current_frame.push_stack(
+1441             VerificationType::integer_type(), CHECK_VERIFY(this));
+1442           no_control_flow = false; break;
+1443         case Bytecodes::_if_icmpeq:
+1444         case Bytecodes::_if_icmpne:
+1445         case Bytecodes::_if_icmplt:
+1446         case Bytecodes::_if_icmpge:
+1447         case Bytecodes::_if_icmpgt:
+1448         case Bytecodes::_if_icmple:
+1449           current_frame.pop_stack(
+1450             VerificationType::integer_type(), CHECK_VERIFY(this));
+1451           // fall through
+1452         case Bytecodes::_ifeq:
+1453         case Bytecodes::_ifne:
+1454         case Bytecodes::_iflt:
+1455         case Bytecodes::_ifge:
+1456         case Bytecodes::_ifgt:
+1457         case Bytecodes::_ifle:
+1458           current_frame.pop_stack(
+1459             VerificationType::integer_type(), CHECK_VERIFY(this));
+1460           target = bcs.dest();
+1461           stackmap_table.check_jump_target(
+1462             &amp;current_frame, target, CHECK_VERIFY(this));
+1463           no_control_flow = false; break;
+1464         case Bytecodes::_if_acmpeq :
+1465         case Bytecodes::_if_acmpne :
+1466           current_frame.pop_stack(
+1467             VerificationType::reference_check(), CHECK_VERIFY(this));
+1468           // fall through
+1469         case Bytecodes::_ifnull :
+1470         case Bytecodes::_ifnonnull :
+1471           current_frame.pop_stack(
+1472             VerificationType::reference_check(), CHECK_VERIFY(this));
+1473           target = bcs.dest();
+1474           stackmap_table.check_jump_target
+1475             (&amp;current_frame, target, CHECK_VERIFY(this));
+1476           no_control_flow = false; break;
+1477         case Bytecodes::_goto :
+1478           target = bcs.dest();
+1479           stackmap_table.check_jump_target(
+1480             &amp;current_frame, target, CHECK_VERIFY(this));
+1481           no_control_flow = true; break;
+1482         case Bytecodes::_goto_w :
+1483           target = bcs.dest_w();
+1484           stackmap_table.check_jump_target(
+1485             &amp;current_frame, target, CHECK_VERIFY(this));
+1486           no_control_flow = true; break;
+1487         case Bytecodes::_tableswitch :
+1488         case Bytecodes::_lookupswitch :
+1489           verify_switch(
+1490             &amp;bcs, code_length, code_data, &amp;current_frame,
+1491             &amp;stackmap_table, CHECK_VERIFY(this));
+1492           no_control_flow = true; break;
+1493         case Bytecodes::_ireturn :
+1494           type = current_frame.pop_stack(
+1495             VerificationType::integer_type(), CHECK_VERIFY(this));
+1496           verify_return_value(return_type, type, bci,
+1497                               &amp;current_frame, CHECK_VERIFY(this));
+1498           no_control_flow = true; break;
+1499         case Bytecodes::_lreturn :
+1500           type2 = current_frame.pop_stack(
+1501             VerificationType::long2_type(), CHECK_VERIFY(this));
+1502           type = current_frame.pop_stack(
+1503             VerificationType::long_type(), CHECK_VERIFY(this));
+1504           verify_return_value(return_type, type, bci,
+1505                               &amp;current_frame, CHECK_VERIFY(this));
+1506           no_control_flow = true; break;
+1507         case Bytecodes::_freturn :
+1508           type = current_frame.pop_stack(
+1509             VerificationType::float_type(), CHECK_VERIFY(this));
+1510           verify_return_value(return_type, type, bci,
+1511                               &amp;current_frame, CHECK_VERIFY(this));
+1512           no_control_flow = true; break;
+1513         case Bytecodes::_dreturn :
+1514           type2 = current_frame.pop_stack(
+1515             VerificationType::double2_type(),  CHECK_VERIFY(this));
+1516           type = current_frame.pop_stack(
+1517             VerificationType::double_type(), CHECK_VERIFY(this));
+1518           verify_return_value(return_type, type, bci,
+1519                               &amp;current_frame, CHECK_VERIFY(this));
+1520           no_control_flow = true; break;
+1521         case Bytecodes::_areturn :
+1522           type = current_frame.pop_stack(
+1523             VerificationType::reference_check(), CHECK_VERIFY(this));
+1524           verify_return_value(return_type, type, bci,
+1525                               &amp;current_frame, CHECK_VERIFY(this));
+1526           no_control_flow = true; break;
+1527         case Bytecodes::_return :
+1528           if (return_type != VerificationType::bogus_type()) {
+1529             verify_error(ErrorContext::bad_code(bci),
+1530                          "Method expects a return value");
+1531             return;
+1532           }
+1533           // Make sure "this" has been initialized if current method is an
+1534           // &lt;init&gt;
+1535           if (_method-&gt;name() == vmSymbols::object_initializer_name() &amp;&amp;
+1536               current_frame.flag_this_uninit()) {
+1537             verify_error(ErrorContext::bad_code(bci),
+1538                          "Constructor must call super() or this() "
+1539                          "before return");
+1540             return;
+1541           }
+1542           no_control_flow = true; break;
+1543         case Bytecodes::_getstatic :
+1544         case Bytecodes::_putstatic :
+1545         case Bytecodes::_getfield :
+1546         case Bytecodes::_putfield :
+1547           verify_field_instructions(
+1548             &amp;bcs, &amp;current_frame, cp, CHECK_VERIFY(this));
+1549           no_control_flow = false; break;
+1550         case Bytecodes::_invokevirtual :
+1551         case Bytecodes::_invokespecial :
+1552         case Bytecodes::_invokestatic :
+1553           verify_invoke_instructions(
+1554             &amp;bcs, code_length, &amp;current_frame,
+1555             &amp;this_uninit, return_type, cp, CHECK_VERIFY(this));
+1556           no_control_flow = false; break;
+1557         case Bytecodes::_invokeinterface :
+1558         case Bytecodes::_invokedynamic :
+1559           verify_invoke_instructions(
+1560             &amp;bcs, code_length, &amp;current_frame,
+1561             &amp;this_uninit, return_type, cp, CHECK_VERIFY(this));
+1562           no_control_flow = false; break;
+1563         case Bytecodes::_new :
+1564         {
+1565           index = bcs.get_index_u2();
+1566           verify_cp_class_type(bci, index, cp, CHECK_VERIFY(this));
+1567           VerificationType new_class_type =
+1568             cp_index_to_type(index, cp, CHECK_VERIFY(this));
+1569           if (!new_class_type.is_object()) {
+1570             verify_error(ErrorContext::bad_type(bci,
+1571                 TypeOrigin::cp(index, new_class_type)),
+1572                 "Illegal new instruction");
+1573             return;
+1574           }
+1575           type = VerificationType::uninitialized_type(bci);
+1576           current_frame.push_stack(type, CHECK_VERIFY(this));
+1577           no_control_flow = false; break;
+1578         }
+1579         case Bytecodes::_newarray :
+1580           type = get_newarray_type(bcs.get_index(), bci, CHECK_VERIFY(this));
+1581           current_frame.pop_stack(
+1582             VerificationType::integer_type(),  CHECK_VERIFY(this));
+1583           current_frame.push_stack(type, CHECK_VERIFY(this));
+1584           no_control_flow = false; break;
+1585         case Bytecodes::_anewarray :
+1586           verify_anewarray(
+1587             bci, bcs.get_index_u2(), cp, &amp;current_frame, CHECK_VERIFY(this));
+1588           no_control_flow = false; break;
+1589         case Bytecodes::_arraylength :
+1590           type = current_frame.pop_stack(
+1591             VerificationType::reference_check(), CHECK_VERIFY(this));
+1592           if (!(type.is_null() || type.is_array())) {
+1593             verify_error(ErrorContext::bad_type(
+1594                 bci, current_frame.stack_top_ctx()),
+1595                 bad_type_msg, "arraylength");
+1596           }
+1597           current_frame.push_stack(
+1598             VerificationType::integer_type(), CHECK_VERIFY(this));
+1599           no_control_flow = false; break;
+1600         case Bytecodes::_checkcast :
+1601         {
+1602           index = bcs.get_index_u2();
+1603           verify_cp_class_type(bci, index, cp, CHECK_VERIFY(this));
+1604           current_frame.pop_stack(object_type(), CHECK_VERIFY(this));
+1605           VerificationType klass_type = cp_index_to_type(
+1606             index, cp, CHECK_VERIFY(this));
+1607           current_frame.push_stack(klass_type, CHECK_VERIFY(this));
+1608           no_control_flow = false; break;
+1609         }
+1610         case Bytecodes::_instanceof : {
+1611           index = bcs.get_index_u2();
+1612           verify_cp_class_type(bci, index, cp, CHECK_VERIFY(this));
+1613           current_frame.pop_stack(object_type(), CHECK_VERIFY(this));
+1614           current_frame.push_stack(
+1615             VerificationType::integer_type(), CHECK_VERIFY(this));
+1616           no_control_flow = false; break;
+1617         }
+1618         case Bytecodes::_monitorenter :
+1619         case Bytecodes::_monitorexit :
+1620           current_frame.pop_stack(
+1621             VerificationType::reference_check(), CHECK_VERIFY(this));
+1622           no_control_flow = false; break;
+1623         case Bytecodes::_multianewarray :
+1624         {
+1625           index = bcs.get_index_u2();
+1626           u2 dim = *(bcs.bcp()+3);
+1627           verify_cp_class_type(bci, index, cp, CHECK_VERIFY(this));
+1628           VerificationType new_array_type =
+1629             cp_index_to_type(index, cp, CHECK_VERIFY(this));
+1630           if (!new_array_type.is_array()) {
+1631             verify_error(ErrorContext::bad_type(bci,
+1632                 TypeOrigin::cp(index, new_array_type)),
+1633                 "Illegal constant pool index in multianewarray instruction");
+1634             return;
+1635           }
+1636           if (dim &lt; 1 || new_array_type.dimensions() &lt; dim) {
+1637             verify_error(ErrorContext::bad_code(bci),
+1638                 "Illegal dimension in multianewarray instruction: %d", dim);
+1639             return;
+1640           }
+1641           for (int i = 0; i &lt; dim; i++) {
+1642             current_frame.pop_stack(
+1643               VerificationType::integer_type(), CHECK_VERIFY(this));
+1644           }
+1645           current_frame.push_stack(new_array_type, CHECK_VERIFY(this));
+1646           no_control_flow = false; break;
+1647         }
+1648         case Bytecodes::_athrow :
+1649           type = VerificationType::reference_type(
+1650             vmSymbols::java_lang_Throwable());
+1651           current_frame.pop_stack(type, CHECK_VERIFY(this));
+1652           no_control_flow = true; break;
+1653         default:
+1654           // We only need to check the valid bytecodes in class file.
+1655           // And jsr and ret are not in the new class file format in JDK1.5.
+1656           verify_error(ErrorContext::bad_code(bci),
+1657               "Bad instruction: %02x", opcode);
+1658           no_control_flow = false;
+1659           return;
+1660       }  // end switch
+1661     }  // end Merge with the next instruction
+1662 
+1663     // Look for possible jump target in exception handlers and see if it
+1664     // matches current_frame
+1665     if (bci &gt;= ex_min &amp;&amp; bci &lt; ex_max) {
+1666       verify_exception_handler_targets(
+1667         bci, this_uninit, &amp;current_frame, &amp;stackmap_table, CHECK_VERIFY(this));
+1668     }
+1669   } // end while
+1670 
+1671   // Make sure that control flow does not fall through end of the method
+1672   if (!no_control_flow) {
+1673     verify_error(ErrorContext::bad_code(code_length),
+1674         "Control flow falls through code end");
+1675     return;
+1676   }
+1677 }
+1678 
+1679 char* ClassVerifier::generate_code_data(methodHandle m, u4 code_length, TRAPS) {
+1680   char* code_data = NEW_RESOURCE_ARRAY(char, code_length);
+1681   memset(code_data, 0, sizeof(char) * code_length);
+1682   RawBytecodeStream bcs(m);
+1683 
+1684   while (!bcs.is_last_bytecode()) {
+1685     if (bcs.raw_next() != Bytecodes::_illegal) {
+1686       int bci = bcs.bci();
+1687       if (bcs.raw_code() == Bytecodes::_new) {
+1688         code_data[bci] = NEW_OFFSET;
+1689       } else {
+1690         code_data[bci] = BYTECODE_OFFSET;
+1691       }
+1692     } else {
+1693       verify_error(ErrorContext::bad_code(bcs.bci()), "Bad instruction");
+1694       return NULL;
+1695     }
+1696   }
+1697 
+1698   return code_data;
+1699 }
+1700 
+1701 void ClassVerifier::verify_exception_handler_table(u4 code_length, char* code_data, int&amp; min, int&amp; max, TRAPS) {
+1702   ExceptionTable exhandlers(_method());
+1703   int exlength = exhandlers.length();
+1704   constantPoolHandle cp (THREAD, _method-&gt;constants());
+1705 
+1706   for(int i = 0; i &lt; exlength; i++) {
+1707     //reacquire the table in case a GC happened
+1708     ExceptionTable exhandlers(_method());
+1709     u2 start_pc = exhandlers.start_pc(i);
+1710     u2 end_pc = exhandlers.end_pc(i);
+1711     u2 handler_pc = exhandlers.handler_pc(i);
+1712     if (start_pc &gt;= code_length || code_data[start_pc] == 0) {
+1713       class_format_error("Illegal exception table start_pc %d", start_pc);
+1714       return;
+1715     }
+1716     if (end_pc != code_length) {   // special case: end_pc == code_length
+1717       if (end_pc &gt; code_length || code_data[end_pc] == 0) {
+1718         class_format_error("Illegal exception table end_pc %d", end_pc);
+1719         return;
+1720       }
+1721     }
+1722     if (handler_pc &gt;= code_length || code_data[handler_pc] == 0) {
+1723       class_format_error("Illegal exception table handler_pc %d", handler_pc);
+1724       return;
+1725     }
+1726     int catch_type_index = exhandlers.catch_type_index(i);
+1727     if (catch_type_index != 0) {
+1728       VerificationType catch_type = cp_index_to_type(
+1729         catch_type_index, cp, CHECK_VERIFY(this));
+1730       VerificationType throwable =
+1731         VerificationType::reference_type(vmSymbols::java_lang_Throwable());
+1732       bool is_subclass = throwable.is_assignable_from(
+1733         catch_type, this, CHECK_VERIFY(this));
+1734       if (!is_subclass) {
+1735         // 4286534: should throw VerifyError according to recent spec change
+1736         verify_error(ErrorContext::bad_type(handler_pc,
+1737             TypeOrigin::cp(catch_type_index, catch_type),
+1738             TypeOrigin::implicit(throwable)),
+1739             "Catch type is not a subclass "
+1740             "of Throwable in exception handler %d", handler_pc);
+1741         return;
+1742       }
+1743     }
+1744     if (start_pc &lt; min) min = start_pc;
+1745     if (end_pc &gt; max) max = end_pc;
+1746   }
+1747 }
+1748 
+1749 void ClassVerifier::verify_local_variable_table(u4 code_length, char* code_data, TRAPS) {
+1750   int localvariable_table_length = _method()-&gt;localvariable_table_length();
+1751   if (localvariable_table_length &gt; 0) {
+1752     LocalVariableTableElement* table = _method()-&gt;localvariable_table_start();
+1753     for (int i = 0; i &lt; localvariable_table_length; i++) {
+1754       u2 start_bci = table[i].start_bci;
+1755       u2 length = table[i].length;
+1756 
+1757       if (start_bci &gt;= code_length || code_data[start_bci] == 0) {
+1758         class_format_error(
+1759           "Illegal local variable table start_pc %d", start_bci);
+1760         return;
+1761       }
+1762       u4 end_bci = (u4)(start_bci + length);
+1763       if (end_bci != code_length) {
+1764         if (end_bci &gt;= code_length || code_data[end_bci] == 0) {
+1765           class_format_error( "Illegal local variable table length %d", length);
+1766           return;
+1767         }
+1768       }
+1769     }
+1770   }
+1771 }
+1772 
+1773 u2 ClassVerifier::verify_stackmap_table(u2 stackmap_index, u2 bci,
+1774                                         StackMapFrame* current_frame,
+1775                                         StackMapTable* stackmap_table,
+1776                                         bool no_control_flow, TRAPS) {
+1777   if (stackmap_index &lt; stackmap_table-&gt;get_frame_count()) {
+1778     u2 this_offset = stackmap_table-&gt;get_offset(stackmap_index);
+1779     if (no_control_flow &amp;&amp; this_offset &gt; bci) {
+1780       verify_error(ErrorContext::missing_stackmap(bci),
+1781                    "Expecting a stack map frame");
+1782       return 0;
+1783     }
+1784     if (this_offset == bci) {
+1785       ErrorContext ctx;
+1786       // See if current stack map can be assigned to the frame in table.
+1787       // current_frame is the stackmap frame got from the last instruction.
+1788       // If matched, current_frame will be updated by this method.
+1789       bool matches = stackmap_table-&gt;match_stackmap(
+1790         current_frame, this_offset, stackmap_index,
+1791         !no_control_flow, true, &amp;ctx, CHECK_VERIFY_(this, 0));
+1792       if (!matches) {
+1793         // report type error
+1794         verify_error(ctx, "Instruction type does not match stack map");
+1795         return 0;
+1796       }
+1797       stackmap_index++;
+1798     } else if (this_offset &lt; bci) {
+1799       // current_offset should have met this_offset.
+1800       class_format_error("Bad stack map offset %d", this_offset);
+1801       return 0;
+1802     }
+1803   } else if (no_control_flow) {
+1804     verify_error(ErrorContext::bad_code(bci), "Expecting a stack map frame");
+1805     return 0;
+1806   }
+1807   return stackmap_index;
+1808 }
+1809 
+1810 void ClassVerifier::verify_exception_handler_targets(u2 bci, bool this_uninit, StackMapFrame* current_frame,
+1811                                                      StackMapTable* stackmap_table, TRAPS) {
+1812   constantPoolHandle cp (THREAD, _method-&gt;constants());
+1813   ExceptionTable exhandlers(_method());
+1814   int exlength = exhandlers.length();
+1815   for(int i = 0; i &lt; exlength; i++) {
+1816     //reacquire the table in case a GC happened
+1817     ExceptionTable exhandlers(_method());
+1818     u2 start_pc = exhandlers.start_pc(i);
+1819     u2 end_pc = exhandlers.end_pc(i);
+1820     u2 handler_pc = exhandlers.handler_pc(i);
+1821     int catch_type_index = exhandlers.catch_type_index(i);
+1822     if(bci &gt;= start_pc &amp;&amp; bci &lt; end_pc) {
+1823       u1 flags = current_frame-&gt;flags();
+1824       if (this_uninit) {  flags |= FLAG_THIS_UNINIT; }
+1825       StackMapFrame* new_frame = current_frame-&gt;frame_in_exception_handler(flags);
+1826       if (catch_type_index != 0) {
+1827         // We know that this index refers to a subclass of Throwable
+1828         VerificationType catch_type = cp_index_to_type(
+1829           catch_type_index, cp, CHECK_VERIFY(this));
+1830         new_frame-&gt;push_stack(catch_type, CHECK_VERIFY(this));
+1831       } else {
+1832         VerificationType throwable =
+1833           VerificationType::reference_type(vmSymbols::java_lang_Throwable());
+1834         new_frame-&gt;push_stack(throwable, CHECK_VERIFY(this));
+1835       }
+1836       ErrorContext ctx;
+1837       bool matches = stackmap_table-&gt;match_stackmap(
+1838         new_frame, handler_pc, true, false, &amp;ctx, CHECK_VERIFY(this));
+1839       if (!matches) {
+1840         verify_error(ctx, "Stack map does not match the one at "
+1841             "exception handler %d", handler_pc);
+1842         return;
+1843       }
+1844     }
+1845   }
+1846 }
+1847 
+1848 void ClassVerifier::verify_cp_index(
+1849     u2 bci, constantPoolHandle cp, int index, TRAPS) {
+1850   int nconstants = cp-&gt;length();
+1851   if ((index &lt;= 0) || (index &gt;= nconstants)) {
+1852     verify_error(ErrorContext::bad_cp_index(bci, index),
+1853         "Illegal constant pool index %d in class %s",
+1854         index, cp-&gt;pool_holder()-&gt;external_name());
+1855     return;
+1856   }
+1857 }
+1858 
+1859 void ClassVerifier::verify_cp_type(
+1860     u2 bci, int index, constantPoolHandle cp, unsigned int types, TRAPS) {
+1861 
+1862   // In some situations, bytecode rewriting may occur while we're verifying.
+1863   // In this case, a constant pool cache exists and some indices refer to that
+1864   // instead.  Be sure we don't pick up such indices by accident.
+1865   // We must check was_recursively_verified() before we get here.
+1866   guarantee(cp-&gt;cache() == NULL, "not rewritten yet");
+1867 
+1868   verify_cp_index(bci, cp, index, CHECK_VERIFY(this));
+1869   unsigned int tag = cp-&gt;tag_at(index).value();
+1870   if ((types &amp; (1 &lt;&lt; tag)) == 0) {
+1871     verify_error(ErrorContext::bad_cp_index(bci, index),
+1872       "Illegal type at constant pool entry %d in class %s",
+1873       index, cp-&gt;pool_holder()-&gt;external_name());
+1874     return;
+1875   }
+1876 }
+1877 
+1878 void ClassVerifier::verify_cp_class_type(
+1879     u2 bci, int index, constantPoolHandle cp, TRAPS) {
+1880   verify_cp_index(bci, cp, index, CHECK_VERIFY(this));
+1881   constantTag tag = cp-&gt;tag_at(index);
+1882   if (!tag.is_klass() &amp;&amp; !tag.is_unresolved_klass()) {
+1883     verify_error(ErrorContext::bad_cp_index(bci, index),
+1884         "Illegal type at constant pool entry %d in class %s",
+1885         index, cp-&gt;pool_holder()-&gt;external_name());
+1886     return;
+1887   }
+1888 }
+1889 
+1890 void ClassVerifier::verify_error(ErrorContext ctx, const char* msg, ...) {
+1891   stringStream ss;
+1892 
+1893   ctx.reset_frames();
+1894   _exception_type = vmSymbols::java_lang_VerifyError();
+1895   _error_context = ctx;
+1896   va_list va;
+1897   va_start(va, msg);
+1898   ss.vprint(msg, va);
+1899   va_end(va);
+1900   _message = ss.as_string();
+1901 #ifdef ASSERT
+1902   ResourceMark rm;
+1903   const char* exception_name = _exception_type-&gt;as_C_string();
+1904   Exceptions::debug_check_abort(exception_name, NULL);
+1905 #endif // ndef ASSERT
+1906 }
+1907 
+1908 void ClassVerifier::class_format_error(const char* msg, ...) {
+1909   stringStream ss;
+1910   _exception_type = vmSymbols::java_lang_ClassFormatError();
+1911   va_list va;
+1912   va_start(va, msg);
+1913   ss.vprint(msg, va);
+1914   va_end(va);
+1915   if (!_method.is_null()) {
+1916     ss.print(" in method %s", _method-&gt;name_and_sig_as_C_string());
+1917   }
+1918   _message = ss.as_string();
+1919 }
+1920 
+1921 Klass* ClassVerifier::load_class(Symbol* name, TRAPS) {
+1922   // Get current loader and protection domain first.
+1923   oop loader = current_class()-&gt;class_loader();
+1924   oop protection_domain = current_class()-&gt;protection_domain();
+1925 
+1926   return SystemDictionary::resolve_or_fail(
+1927     name, Handle(THREAD, loader), Handle(THREAD, protection_domain),
+1928     true, CHECK_NULL);
+1929 }
+1930 
+1931 bool ClassVerifier::is_protected_access(instanceKlassHandle this_class,
+1932                                         Klass* target_class,
+1933                                         Symbol* field_name,
+1934                                         Symbol* field_sig,
+1935                                         bool is_method) {
+1936   No_Safepoint_Verifier nosafepoint;
+1937 
+1938   // If target class isn't a super class of this class, we don't worry about this case
+1939   if (!this_class-&gt;is_subclass_of(target_class)) {
+1940     return false;
+1941   }
+1942   // Check if the specified method or field is protected
+1943   InstanceKlass* target_instance = InstanceKlass::cast(target_class);
+1944   fieldDescriptor fd;
+1945   if (is_method) {
+1946     Method* m = target_instance-&gt;uncached_lookup_method(field_name, field_sig, Klass::normal);
+1947     if (m != NULL &amp;&amp; m-&gt;is_protected()) {
+1948       if (!this_class-&gt;is_same_class_package(m-&gt;method_holder())) {
+1949         return true;
+1950       }
+1951     }
+1952   } else {
+1953     Klass* member_klass = target_instance-&gt;find_field(field_name, field_sig, &amp;fd);
+1954     if (member_klass != NULL &amp;&amp; fd.is_protected()) {
+1955       if (!this_class-&gt;is_same_class_package(member_klass)) {
+1956         return true;
+1957       }
+1958     }
+1959   }
+1960   return false;
+1961 }
+1962 
+1963 void ClassVerifier::verify_ldc(
+1964     int opcode, u2 index, StackMapFrame* current_frame,
+1965     constantPoolHandle cp, u2 bci, TRAPS) {
+1966   verify_cp_index(bci, cp, index, CHECK_VERIFY(this));
+1967   constantTag tag = cp-&gt;tag_at(index);
+1968   unsigned int types;
+1969   if (opcode == Bytecodes::_ldc || opcode == Bytecodes::_ldc_w) {
+1970     if (!tag.is_unresolved_klass()) {
+1971       types = (1 &lt;&lt; JVM_CONSTANT_Integer) | (1 &lt;&lt; JVM_CONSTANT_Float)
+1972             | (1 &lt;&lt; JVM_CONSTANT_String)  | (1 &lt;&lt; JVM_CONSTANT_Class)
+1973             | (1 &lt;&lt; JVM_CONSTANT_MethodHandle) | (1 &lt;&lt; JVM_CONSTANT_MethodType);
+1974       // Note:  The class file parser already verified the legality of
+1975       // MethodHandle and MethodType constants.
+1976       verify_cp_type(bci, index, cp, types, CHECK_VERIFY(this));
+1977     }
+1978   } else {
+1979     assert(opcode == Bytecodes::_ldc2_w, "must be ldc2_w");
+1980     types = (1 &lt;&lt; JVM_CONSTANT_Double) | (1 &lt;&lt; JVM_CONSTANT_Long);
+1981     verify_cp_type(bci, index, cp, types, CHECK_VERIFY(this));
+1982   }
+1983   if (tag.is_string() &amp;&amp; cp-&gt;is_pseudo_string_at(index)) {
+1984     current_frame-&gt;push_stack(object_type(), CHECK_VERIFY(this));
+1985   } else if (tag.is_string()) {
+1986     current_frame-&gt;push_stack(
+1987       VerificationType::reference_type(
+1988         vmSymbols::java_lang_String()), CHECK_VERIFY(this));
+1989   } else if (tag.is_klass() || tag.is_unresolved_klass()) {
+1990     current_frame-&gt;push_stack(
+1991       VerificationType::reference_type(
+1992         vmSymbols::java_lang_Class()), CHECK_VERIFY(this));
+1993   } else if (tag.is_int()) {
+1994     current_frame-&gt;push_stack(
+1995       VerificationType::integer_type(), CHECK_VERIFY(this));
+1996   } else if (tag.is_float()) {
+1997     current_frame-&gt;push_stack(
+1998       VerificationType::float_type(), CHECK_VERIFY(this));
+1999   } else if (tag.is_double()) {
+2000     current_frame-&gt;push_stack_2(
+2001       VerificationType::double_type(),
+2002       VerificationType::double2_type(), CHECK_VERIFY(this));
+2003   } else if (tag.is_long()) {
+2004     current_frame-&gt;push_stack_2(
+2005       VerificationType::long_type(),
+2006       VerificationType::long2_type(), CHECK_VERIFY(this));
+2007   } else if (tag.is_method_handle()) {
+2008     current_frame-&gt;push_stack(
+2009       VerificationType::reference_type(
+2010         vmSymbols::java_lang_invoke_MethodHandle()), CHECK_VERIFY(this));
+2011   } else if (tag.is_method_type()) {
+2012     current_frame-&gt;push_stack(
+2013       VerificationType::reference_type(
+2014         vmSymbols::java_lang_invoke_MethodType()), CHECK_VERIFY(this));
+2015   } else {
+2016     /* Unreachable? verify_cp_type has already validated the cp type. */
+2017     verify_error(
+2018         ErrorContext::bad_cp_index(bci, index), "Invalid index in ldc");
+2019     return;
+2020   }
+2021 }
+2022 
+2023 void ClassVerifier::verify_switch(
+2024     RawBytecodeStream* bcs, u4 code_length, char* code_data,
+2025     StackMapFrame* current_frame, StackMapTable* stackmap_table, TRAPS) {
+2026   int bci = bcs-&gt;bci();
+2027   address bcp = bcs-&gt;bcp();
+2028   address aligned_bcp = (address) round_to((intptr_t)(bcp + 1), jintSize);
+2029 
+2030   if (_klass-&gt;major_version() &lt; NONZERO_PADDING_BYTES_IN_SWITCH_MAJOR_VERSION) {
+2031     // 4639449 &amp; 4647081: padding bytes must be 0
+2032     u2 padding_offset = 1;
+2033     while ((bcp + padding_offset) &lt; aligned_bcp) {
+2034       if(*(bcp + padding_offset) != 0) {
+2035         verify_error(ErrorContext::bad_code(bci),
+2036                      "Nonzero padding byte in lookswitch or tableswitch");
+2037         return;
+2038       }
+2039       padding_offset++;
+2040     }
+2041   }
+2042 
+2043   int default_offset = (int) Bytes::get_Java_u4(aligned_bcp);
+2044   int keys, delta;
+2045   current_frame-&gt;pop_stack(
+2046     VerificationType::integer_type(), CHECK_VERIFY(this));
+2047   if (bcs-&gt;raw_code() == Bytecodes::_tableswitch) {
+2048     jint low = (jint)Bytes::get_Java_u4(aligned_bcp + jintSize);
+2049     jint high = (jint)Bytes::get_Java_u4(aligned_bcp + 2*jintSize);
+2050     if (low &gt; high) {
+2051       verify_error(ErrorContext::bad_code(bci),
+2052           "low must be less than or equal to high in tableswitch");
+2053       return;
+2054     }
+2055     keys = high - low + 1;
+2056     if (keys &lt; 0) {
+2057       verify_error(ErrorContext::bad_code(bci), "too many keys in tableswitch");
+2058       return;
+2059     }
+2060     delta = 1;
+2061   } else {
+2062     keys = (int)Bytes::get_Java_u4(aligned_bcp + jintSize);
+2063     if (keys &lt; 0) {
+2064       verify_error(ErrorContext::bad_code(bci),
+2065                    "number of keys in lookupswitch less than 0");
+2066       return;
+2067     }
+2068     delta = 2;
+2069     // Make sure that the lookupswitch items are sorted
+2070     for (int i = 0; i &lt; (keys - 1); i++) {
+2071       jint this_key = Bytes::get_Java_u4(aligned_bcp + (2+2*i)*jintSize);
+2072       jint next_key = Bytes::get_Java_u4(aligned_bcp + (2+2*i+2)*jintSize);
+2073       if (this_key &gt;= next_key) {
+2074         verify_error(ErrorContext::bad_code(bci),
+2075                      "Bad lookupswitch instruction");
+2076         return;
+2077       }
+2078     }
+2079   }
+2080   int target = bci + default_offset;
+2081   stackmap_table-&gt;check_jump_target(current_frame, target, CHECK_VERIFY(this));
+2082   for (int i = 0; i &lt; keys; i++) {
+2083     // Because check_jump_target() may safepoint, the bytecode could have
+2084     // moved, which means 'aligned_bcp' is no good and needs to be recalculated.
+2085     aligned_bcp = (address)round_to((intptr_t)(bcs-&gt;bcp() + 1), jintSize);
+2086     target = bci + (jint)Bytes::get_Java_u4(aligned_bcp+(3+i*delta)*jintSize);
+2087     stackmap_table-&gt;check_jump_target(
+2088       current_frame, target, CHECK_VERIFY(this));
+2089   }
+2090   NOT_PRODUCT(aligned_bcp = NULL);  // no longer valid at this point
+2091 }
+2092 
+2093 bool ClassVerifier::name_in_supers(
+2094     Symbol* ref_name, instanceKlassHandle current) {
+2095   Klass* super = current-&gt;super();
+2096   while (super != NULL) {
+2097     if (super-&gt;name() == ref_name) {
+2098       return true;
+2099     }
+2100     super = super-&gt;super();
+2101   }
+2102   return false;
+2103 }
+2104 
+2105 void ClassVerifier::verify_field_instructions(RawBytecodeStream* bcs,
+2106                                               StackMapFrame* current_frame,
+2107                                               constantPoolHandle cp,
+2108                                               TRAPS) {
+2109   u2 index = bcs-&gt;get_index_u2();
+2110   verify_cp_type(bcs-&gt;bci(), index, cp,
+2111       1 &lt;&lt; JVM_CONSTANT_Fieldref, CHECK_VERIFY(this));
+2112 
+2113   // Get field name and signature
+2114   Symbol* field_name = cp-&gt;name_ref_at(index);
+2115   Symbol* field_sig = cp-&gt;signature_ref_at(index);
+2116 
+2117   if (!SignatureVerifier::is_valid_type_signature(field_sig)) {
+2118     class_format_error(
+2119       "Invalid signature for field in class %s referenced "
+2120       "from constant pool index %d", _klass-&gt;external_name(), index);
+2121     return;
+2122   }
+2123 
+2124   // Get referenced class type
+2125   VerificationType ref_class_type = cp_ref_index_to_type(
+2126     index, cp, CHECK_VERIFY(this));
+2127   if (!ref_class_type.is_object()) {
+2128     /* Unreachable?  Class file parser verifies Fieldref contents */
+2129     verify_error(ErrorContext::bad_type(bcs-&gt;bci(),
+2130         TypeOrigin::cp(index, ref_class_type)),
+2131         "Expecting reference to class in class %s at constant pool index %d",
+2132         _klass-&gt;external_name(), index);
+2133     return;
+2134   }
+2135   VerificationType target_class_type = ref_class_type;
+2136 
+2137   assert(sizeof(VerificationType) == sizeof(uintptr_t),
+2138         "buffer type must match VerificationType size");
+2139   uintptr_t field_type_buffer[2];
+2140   VerificationType* field_type = (VerificationType*)field_type_buffer;
+2141   // If we make a VerificationType[2] array directly, the compiler calls
+2142   // to the c-runtime library to do the allocation instead of just
+2143   // stack allocating it.  Plus it would run constructors.  This shows up
+2144   // in performance profiles.
+2145 
+2146   SignatureStream sig_stream(field_sig, false);
+2147   VerificationType stack_object_type;
+2148   int n = change_sig_to_verificationType(
+2149     &amp;sig_stream, field_type, CHECK_VERIFY(this));
+2150   u2 bci = bcs-&gt;bci();
+2151   bool is_assignable;
+2152   switch (bcs-&gt;raw_code()) {
+2153     case Bytecodes::_getstatic: {
+2154       for (int i = 0; i &lt; n; i++) {
+2155         current_frame-&gt;push_stack(field_type[i], CHECK_VERIFY(this));
+2156       }
+2157       break;
+2158     }
+2159     case Bytecodes::_putstatic: {
+2160       for (int i = n - 1; i &gt;= 0; i--) {
+2161         current_frame-&gt;pop_stack(field_type[i], CHECK_VERIFY(this));
+2162       }
+2163       break;
+2164     }
+2165     case Bytecodes::_getfield: {
+2166       stack_object_type = current_frame-&gt;pop_stack(
+2167         target_class_type, CHECK_VERIFY(this));
+2168       for (int i = 0; i &lt; n; i++) {
+2169         current_frame-&gt;push_stack(field_type[i], CHECK_VERIFY(this));
+2170       }
+2171       goto check_protected;
+2172     }
+2173     case Bytecodes::_putfield: {
+2174       for (int i = n - 1; i &gt;= 0; i--) {
+2175         current_frame-&gt;pop_stack(field_type[i], CHECK_VERIFY(this));
+2176       }
+2177       stack_object_type = current_frame-&gt;pop_stack(CHECK_VERIFY(this));
+2178 
+2179       // The JVMS 2nd edition allows field initialization before the superclass
+2180       // initializer, if the field is defined within the current class.
+2181       fieldDescriptor fd;
+2182       if (stack_object_type == VerificationType::uninitialized_this_type() &amp;&amp;
+2183           target_class_type.equals(current_type()) &amp;&amp;
+2184           _klass-&gt;find_local_field(field_name, field_sig, &amp;fd)) {
+2185         stack_object_type = current_type();
+2186       }
+2187       is_assignable = target_class_type.is_assignable_from(
+2188         stack_object_type, this, CHECK_VERIFY(this));
+2189       if (!is_assignable) {
+2190         verify_error(ErrorContext::bad_type(bci,
+2191             current_frame-&gt;stack_top_ctx(),
+2192             TypeOrigin::cp(index, target_class_type)),
+2193             "Bad type on operand stack in putfield");
+2194         return;
+2195       }
+2196     }
+2197     check_protected: {
+2198       if (_this_type == stack_object_type)
+2199         break; // stack_object_type must be assignable to _current_class_type
+2200       Symbol* ref_class_name =
+2201         cp-&gt;klass_name_at(cp-&gt;klass_ref_index_at(index));
+2202       if (!name_in_supers(ref_class_name, current_class()))
+2203         // stack_object_type must be assignable to _current_class_type since:
+2204         // 1. stack_object_type must be assignable to ref_class.
+2205         // 2. ref_class must be _current_class or a subclass of it. It can't
+2206         //    be a superclass of it. See revised JVMS 5.4.4.
+2207         break;
+2208 
+2209       Klass* ref_class_oop = load_class(ref_class_name, CHECK);
+2210       if (is_protected_access(current_class(), ref_class_oop, field_name,
+2211                               field_sig, false)) {
+2212         // It's protected access, check if stack object is assignable to
+2213         // current class.
+2214         is_assignable = current_type().is_assignable_from(
+2215           stack_object_type, this, CHECK_VERIFY(this));
+2216         if (!is_assignable) {
+2217           verify_error(ErrorContext::bad_type(bci,
+2218               current_frame-&gt;stack_top_ctx(),
+2219               TypeOrigin::implicit(current_type())),
+2220               "Bad access to protected data in getfield");
+2221           return;
+2222         }
+2223       }
+2224       break;
+2225     }
+2226     default: ShouldNotReachHere();
+2227   }
+2228 }
+2229 
+2230 void ClassVerifier::verify_invoke_init(
+2231     RawBytecodeStream* bcs, u2 ref_class_index, VerificationType ref_class_type,
+2232     StackMapFrame* current_frame, u4 code_length, bool *this_uninit,
+2233     constantPoolHandle cp, TRAPS) {
+2234   u2 bci = bcs-&gt;bci();
+2235   VerificationType type = current_frame-&gt;pop_stack(
+2236     VerificationType::reference_check(), CHECK_VERIFY(this));
+2237   if (type == VerificationType::uninitialized_this_type()) {
+2238     // The method must be an &lt;init&gt; method of this class or its superclass
+2239     Klass* superk = current_class()-&gt;super();
+2240     if (ref_class_type.name() != current_class()-&gt;name() &amp;&amp;
+2241         ref_class_type.name() != superk-&gt;name()) {
+2242       verify_error(ErrorContext::bad_type(bci,
+2243           TypeOrigin::implicit(ref_class_type),
+2244           TypeOrigin::implicit(current_type())),
+2245           "Bad &lt;init&gt; method call");
+2246       return;
+2247     }
+2248     current_frame-&gt;initialize_object(type, current_type());
+2249     *this_uninit = true;
+2250   } else if (type.is_uninitialized()) {
+2251     u2 new_offset = type.bci();
+2252     address new_bcp = bcs-&gt;bcp() - bci + new_offset;
+2253     if (new_offset &gt; (code_length - 3) || (*new_bcp) != Bytecodes::_new) {
+2254       /* Unreachable?  Stack map parsing ensures valid type and new
+2255        * instructions have a valid BCI. */
+2256       verify_error(ErrorContext::bad_code(new_offset),
+2257                    "Expecting new instruction");
+2258       return;
+2259     }
+2260     u2 new_class_index = Bytes::get_Java_u2(new_bcp + 1);
+2261     verify_cp_class_type(bci, new_class_index, cp, CHECK_VERIFY(this));
+2262 
+2263     // The method must be an &lt;init&gt; method of the indicated class
+2264     VerificationType new_class_type = cp_index_to_type(
+2265       new_class_index, cp, CHECK_VERIFY(this));
+2266     if (!new_class_type.equals(ref_class_type)) {
+2267       verify_error(ErrorContext::bad_type(bci,
+2268           TypeOrigin::cp(new_class_index, new_class_type),
+2269           TypeOrigin::cp(ref_class_index, ref_class_type)),
+2270           "Call to wrong &lt;init&gt; method");
+2271       return;
+2272     }
+2273     // According to the VM spec, if the referent class is a superclass of the
+2274     // current class, and is in a different runtime package, and the method is
+2275     // protected, then the objectref must be the current class or a subclass
+2276     // of the current class.
+2277     VerificationType objectref_type = new_class_type;
+2278     if (name_in_supers(ref_class_type.name(), current_class())) {
+2279       Klass* ref_klass = load_class(
+2280         ref_class_type.name(), CHECK_VERIFY(this));
+2281       Method* m = InstanceKlass::cast(ref_klass)-&gt;uncached_lookup_method(
+2282         vmSymbols::object_initializer_name(),
+2283         cp-&gt;signature_ref_at(bcs-&gt;get_index_u2()),
+2284         Klass::normal);
+2285       instanceKlassHandle mh(THREAD, m-&gt;method_holder());
+2286       if (m-&gt;is_protected() &amp;&amp; !mh-&gt;is_same_class_package(_klass())) {
+2287         bool assignable = current_type().is_assignable_from(
+2288           objectref_type, this, CHECK_VERIFY(this));
+2289         if (!assignable) {
+2290           verify_error(ErrorContext::bad_type(bci,
+2291               TypeOrigin::cp(new_class_index, objectref_type),
+2292               TypeOrigin::implicit(current_type())),
+2293               "Bad access to protected &lt;init&gt; method");
+2294           return;
+2295         }
+2296       }
+2297     }
+2298     current_frame-&gt;initialize_object(type, new_class_type);
+2299   } else {
+2300     verify_error(ErrorContext::bad_type(bci, current_frame-&gt;stack_top_ctx()),
+2301         "Bad operand type when invoking &lt;init&gt;");
+2302     return;
+2303   }
+2304 }
+2305 
+2306 bool ClassVerifier::is_same_or_direct_interface(
+2307     instanceKlassHandle klass,
+2308     VerificationType klass_type,
+2309     VerificationType ref_class_type) {
+2310   if (ref_class_type.equals(klass_type)) return true;
+2311   Array&lt;Klass*&gt;* local_interfaces = klass-&gt;local_interfaces();
+2312   if (local_interfaces != NULL) {
+2313     for (int x = 0; x &lt; local_interfaces-&gt;length(); x++) {
+2314       Klass* k = local_interfaces-&gt;at(x);
+2315       assert (k != NULL &amp;&amp; k-&gt;is_interface(), "invalid interface");
+2316       if (ref_class_type.equals(VerificationType::reference_type(k-&gt;name()))) {
+2317         return true;
+2318       }
+2319     }
+2320   }
+2321   return false;
+2322 }
+2323 
+2324 void ClassVerifier::verify_invoke_instructions(
+2325     RawBytecodeStream* bcs, u4 code_length, StackMapFrame* current_frame,
+2326     bool *this_uninit, VerificationType return_type,
+2327     constantPoolHandle cp, TRAPS) {
+2328   // Make sure the constant pool item is the right type
+2329   u2 index = bcs-&gt;get_index_u2();
+2330   Bytecodes::Code opcode = bcs-&gt;raw_code();
+2331   unsigned int types;
+2332   switch (opcode) {
+2333     case Bytecodes::_invokeinterface:
+2334       types = 1 &lt;&lt; JVM_CONSTANT_InterfaceMethodref;
+2335       break;
+2336     case Bytecodes::_invokedynamic:
+2337       types = 1 &lt;&lt; JVM_CONSTANT_InvokeDynamic;
+2338       break;
+2339     case Bytecodes::_invokespecial:
+2340     case Bytecodes::_invokestatic:
+2341       types = (_klass-&gt;major_version() &lt; STATIC_METHOD_IN_INTERFACE_MAJOR_VERSION) ?
+2342         (1 &lt;&lt; JVM_CONSTANT_Methodref) :
+2343         ((1 &lt;&lt; JVM_CONSTANT_InterfaceMethodref) | (1 &lt;&lt; JVM_CONSTANT_Methodref));
+2344       break;
+2345     default:
+2346       types = 1 &lt;&lt; JVM_CONSTANT_Methodref;
+2347   }
+2348   verify_cp_type(bcs-&gt;bci(), index, cp, types, CHECK_VERIFY(this));
+2349 
+2350   // Get method name and signature
+2351   Symbol* method_name = cp-&gt;name_ref_at(index);
+2352   Symbol* method_sig = cp-&gt;signature_ref_at(index);
+2353 
+2354   if (!SignatureVerifier::is_valid_method_signature(method_sig)) {
+2355     class_format_error(
+2356       "Invalid method signature in class %s referenced "
+2357       "from constant pool index %d", _klass-&gt;external_name(), index);
+2358     return;
+2359   }
+2360 
+2361   // Get referenced class type
+2362   VerificationType ref_class_type;
+2363   if (opcode == Bytecodes::_invokedynamic) {
+2364     if (!EnableInvokeDynamic ||
+2365         _klass-&gt;major_version() &lt; Verifier::INVOKEDYNAMIC_MAJOR_VERSION) {
+2366       class_format_error(
+2367         (!EnableInvokeDynamic ?
+2368          "invokedynamic instructions not enabled in this JVM" :
+2369          "invokedynamic instructions not supported by this class file version"),
+2370         _klass-&gt;external_name());
+2371       return;
+2372     }
+2373   } else {
+2374     ref_class_type = cp_ref_index_to_type(index, cp, CHECK_VERIFY(this));
+2375   }
+2376 
+2377   // For a small signature length, we just allocate 128 bytes instead
+2378   // of parsing the signature once to find its size.
+2379   // -3 is for '(', ')' and return descriptor; multiply by 2 is for
+2380   // longs/doubles to be consertive.
+2381   assert(sizeof(VerificationType) == sizeof(uintptr_t),
+2382         "buffer type must match VerificationType size");
+2383   uintptr_t on_stack_sig_types_buffer[128];
+2384   // If we make a VerificationType[128] array directly, the compiler calls
+2385   // to the c-runtime library to do the allocation instead of just
+2386   // stack allocating it.  Plus it would run constructors.  This shows up
+2387   // in performance profiles.
+2388 
+2389   VerificationType* sig_types;
+2390   int size = (method_sig-&gt;utf8_length() - 3) * 2;
+2391   if (size &gt; 128) {
+2392     // Long and double occupies two slots here.
+2393     ArgumentSizeComputer size_it(method_sig);
+2394     size = size_it.size();
+2395     sig_types = NEW_RESOURCE_ARRAY_IN_THREAD(THREAD, VerificationType, size);
+2396   } else{
+2397     sig_types = (VerificationType*)on_stack_sig_types_buffer;
+2398   }
+2399   SignatureStream sig_stream(method_sig);
+2400   int sig_i = 0;
+2401   while (!sig_stream.at_return_type()) {
+2402     sig_i += change_sig_to_verificationType(
+2403       &amp;sig_stream, &amp;sig_types[sig_i], CHECK_VERIFY(this));
+2404     sig_stream.next();
+2405   }
+2406   int nargs = sig_i;
+2407 
+2408 #ifdef ASSERT
+2409   {
+2410     ArgumentSizeComputer size_it(method_sig);
+2411     assert(nargs == size_it.size(), "Argument sizes do not match");
+2412     assert(nargs &lt;= (method_sig-&gt;utf8_length() - 3) * 2, "estimate of max size isn't conservative enough");
+2413   }
+2414 #endif
+2415 
+2416   // Check instruction operands
+2417   u2 bci = bcs-&gt;bci();
+2418   if (opcode == Bytecodes::_invokeinterface) {
+2419     address bcp = bcs-&gt;bcp();
+2420     // 4905268: count operand in invokeinterface should be nargs+1, not nargs.
+2421     // JSR202 spec: The count operand of an invokeinterface instruction is valid if it is
+2422     // the difference between the size of the operand stack before and after the instruction
+2423     // executes.
+2424     if (*(bcp+3) != (nargs+1)) {
+2425       verify_error(ErrorContext::bad_code(bci),
+2426           "Inconsistent args count operand in invokeinterface");
+2427       return;
+2428     }
+2429     if (*(bcp+4) != 0) {
+2430       verify_error(ErrorContext::bad_code(bci),
+2431           "Fourth operand byte of invokeinterface must be zero");
+2432       return;
+2433     }
+2434   }
+2435 
+2436   if (opcode == Bytecodes::_invokedynamic) {
+2437     address bcp = bcs-&gt;bcp();
+2438     if (*(bcp+3) != 0 || *(bcp+4) != 0) {
+2439       verify_error(ErrorContext::bad_code(bci),
+2440           "Third and fourth operand bytes of invokedynamic must be zero");
+2441       return;
+2442     }
+2443   }
+2444 
+2445   if (method_name-&gt;byte_at(0) == '&lt;') {
+2446     // Make sure &lt;init&gt; can only be invoked by invokespecial
+2447     if (opcode != Bytecodes::_invokespecial ||
+2448         method_name != vmSymbols::object_initializer_name()) {
+2449       verify_error(ErrorContext::bad_code(bci),
+2450           "Illegal call to internal method");
+2451       return;
+2452     }
+2453   } else if (opcode == Bytecodes::_invokespecial
+2454              &amp;&amp; !is_same_or_direct_interface(current_class(), current_type(), ref_class_type)
+2455              &amp;&amp; !ref_class_type.equals(VerificationType::reference_type(
+2456                   current_class()-&gt;super()-&gt;name()))) {
+2457     bool subtype = false;
+2458     bool have_imr_indirect = cp-&gt;tag_at(index).value() == JVM_CONSTANT_InterfaceMethodref;
+2459     if (!current_class()-&gt;is_anonymous()) {
+2460       subtype = ref_class_type.is_assignable_from(
+2461                  current_type(), this, CHECK_VERIFY(this));
+2462     } else {
+2463       VerificationType host_klass_type =
+2464                         VerificationType::reference_type(current_class()-&gt;host_klass()-&gt;name());
+2465       subtype = ref_class_type.is_assignable_from(host_klass_type, this, CHECK_VERIFY(this));
+2466 
+2467       // If invokespecial of IMR, need to recheck for same or
+2468       // direct interface relative to the host class
+2469       have_imr_indirect = (have_imr_indirect &amp;&amp;
+2470                            !is_same_or_direct_interface(
+2471                              InstanceKlass::cast(current_class()-&gt;host_klass()),
+2472                              host_klass_type, ref_class_type));
+2473     }
+2474     if (!subtype) {
+2475       verify_error(ErrorContext::bad_code(bci),
+2476           "Bad invokespecial instruction: "
+2477           "current class isn't assignable to reference class.");
+2478        return;
+2479     } else if (have_imr_indirect) {
+2480       verify_error(ErrorContext::bad_code(bci),
+2481           "Bad invokespecial instruction: "
+2482           "interface method reference is in an indirect superinterface.");
+2483       return;
+2484     }
+2485 
+2486   }
+2487   // Match method descriptor with operand stack
+2488   for (int i = nargs - 1; i &gt;= 0; i--) {  // Run backwards
+2489     current_frame-&gt;pop_stack(sig_types[i], CHECK_VERIFY(this));
+2490   }
+2491   // Check objectref on operand stack
+2492   if (opcode != Bytecodes::_invokestatic &amp;&amp;
+2493       opcode != Bytecodes::_invokedynamic) {
+2494     if (method_name == vmSymbols::object_initializer_name()) {  // &lt;init&gt; method
+2495       verify_invoke_init(bcs, index, ref_class_type, current_frame,
+2496         code_length, this_uninit, cp, CHECK_VERIFY(this));
+2497     } else {   // other methods
+2498       // Ensures that target class is assignable to method class.
+2499       if (opcode == Bytecodes::_invokespecial) {
+2500         if (!current_class()-&gt;is_anonymous()) {
+2501           current_frame-&gt;pop_stack(current_type(), CHECK_VERIFY(this));
+2502         } else {
+2503           // anonymous class invokespecial calls: check if the
+2504           // objectref is a subtype of the host_klass of the current class
+2505           // to allow an anonymous class to reference methods in the host_klass
+2506           VerificationType top = current_frame-&gt;pop_stack(CHECK_VERIFY(this));
+2507           VerificationType hosttype =
+2508             VerificationType::reference_type(current_class()-&gt;host_klass()-&gt;name());
+2509           bool subtype = hosttype.is_assignable_from(top, this, CHECK_VERIFY(this));
+2510           if (!subtype) {
+2511             verify_error( ErrorContext::bad_type(current_frame-&gt;offset(),
+2512               current_frame-&gt;stack_top_ctx(),
+2513               TypeOrigin::implicit(top)),
+2514               "Bad type on operand stack");
+2515             return;
+2516           }
+2517         }
+2518       } else if (opcode == Bytecodes::_invokevirtual) {
+2519         VerificationType stack_object_type =
+2520           current_frame-&gt;pop_stack(ref_class_type, CHECK_VERIFY(this));
+2521         if (current_type() != stack_object_type) {
+2522           assert(cp-&gt;cache() == NULL, "not rewritten yet");
+2523           Symbol* ref_class_name =
+2524             cp-&gt;klass_name_at(cp-&gt;klass_ref_index_at(index));
+2525           // See the comments in verify_field_instructions() for
+2526           // the rationale behind this.
+2527           if (name_in_supers(ref_class_name, current_class())) {
+2528             Klass* ref_class = load_class(ref_class_name, CHECK);
+2529             if (is_protected_access(
+2530                   _klass, ref_class, method_name, method_sig, true)) {
+2531               // It's protected access, check if stack object is
+2532               // assignable to current class.
+2533               bool is_assignable = current_type().is_assignable_from(
+2534                 stack_object_type, this, CHECK_VERIFY(this));
+2535               if (!is_assignable) {
+2536                 if (ref_class_type.name() == vmSymbols::java_lang_Object()
+2537                     &amp;&amp; stack_object_type.is_array()
+2538                     &amp;&amp; method_name == vmSymbols::clone_name()) {
+2539                   // Special case: arrays pretend to implement public Object
+2540                   // clone().
+2541                 } else {
+2542                   verify_error(ErrorContext::bad_type(bci,
+2543                       current_frame-&gt;stack_top_ctx(),
+2544                       TypeOrigin::implicit(current_type())),
+2545                       "Bad access to protected data in invokevirtual");
+2546                   return;
+2547                 }
+2548               }
+2549             }
+2550           }
+2551         }
+2552       } else {
+2553         assert(opcode == Bytecodes::_invokeinterface, "Unexpected opcode encountered");
+2554         current_frame-&gt;pop_stack(ref_class_type, CHECK_VERIFY(this));
+2555       }
+2556     }
+2557   }
+2558   // Push the result type.
+2559   if (sig_stream.type() != T_VOID) {
+2560     if (method_name == vmSymbols::object_initializer_name()) {
+2561       // &lt;init&gt; method must have a void return type
+2562       /* Unreachable?  Class file parser verifies that methods with '&lt;' have
+2563        * void return */
+2564       verify_error(ErrorContext::bad_code(bci),
+2565           "Return type must be void in &lt;init&gt; method");
+2566       return;
+2567     }
+2568     VerificationType return_type[2];
+2569     int n = change_sig_to_verificationType(
+2570       &amp;sig_stream, return_type, CHECK_VERIFY(this));
+2571     for (int i = 0; i &lt; n; i++) {
+2572       current_frame-&gt;push_stack(return_type[i], CHECK_VERIFY(this)); // push types backwards
+2573     }
+2574   }
+2575 }
+2576 
+2577 VerificationType ClassVerifier::get_newarray_type(
+2578     u2 index, u2 bci, TRAPS) {
+2579   const char* from_bt[] = {
+2580     NULL, NULL, NULL, NULL, "[Z", "[C", "[F", "[D", "[B", "[S", "[I", "[J",
+2581   };
+2582   if (index &lt; T_BOOLEAN || index &gt; T_LONG) {
+2583     verify_error(ErrorContext::bad_code(bci), "Illegal newarray instruction");
+2584     return VerificationType::bogus_type();
+2585   }
+2586 
+2587   // from_bt[index] contains the array signature which has a length of 2
+2588   Symbol* sig = create_temporary_symbol(
+2589     from_bt[index], 2, CHECK_(VerificationType::bogus_type()));
+2590   return VerificationType::reference_type(sig);
+2591 }
+2592 
+2593 void ClassVerifier::verify_anewarray(
+2594     u2 bci, u2 index, constantPoolHandle cp,
+2595     StackMapFrame* current_frame, TRAPS) {
+2596   verify_cp_class_type(bci, index, cp, CHECK_VERIFY(this));
+2597   current_frame-&gt;pop_stack(
+2598     VerificationType::integer_type(), CHECK_VERIFY(this));
+2599 
+2600   VerificationType component_type =
+2601     cp_index_to_type(index, cp, CHECK_VERIFY(this));
+2602   int length;
+2603   char* arr_sig_str;
+2604   if (component_type.is_array()) {     // it's an array
+2605     const char* component_name = component_type.name()-&gt;as_utf8();
+2606     // add one dimension to component
+2607     length = (int)strlen(component_name) + 1;
+2608     arr_sig_str = NEW_RESOURCE_ARRAY_IN_THREAD(THREAD, char, length);
+2609     arr_sig_str[0] = '[';
+2610     strncpy(&amp;arr_sig_str[1], component_name, length - 1);
+2611   } else {         // it's an object or interface
+2612     const char* component_name = component_type.name()-&gt;as_utf8();
+2613     // add one dimension to component with 'L' prepended and ';' postpended.
+2614     length = (int)strlen(component_name) + 3;
+2615     arr_sig_str = NEW_RESOURCE_ARRAY_IN_THREAD(THREAD, char, length);
+2616     arr_sig_str[0] = '[';
+2617     arr_sig_str[1] = 'L';
+2618     strncpy(&amp;arr_sig_str[2], component_name, length - 2);
+2619     arr_sig_str[length - 1] = ';';
+2620   }
+2621   Symbol* arr_sig = create_temporary_symbol(
+2622     arr_sig_str, length, CHECK_VERIFY(this));
+2623   VerificationType new_array_type = VerificationType::reference_type(arr_sig);
+2624   current_frame-&gt;push_stack(new_array_type, CHECK_VERIFY(this));
+2625 }
+2626 
+2627 void ClassVerifier::verify_iload(u2 index, StackMapFrame* current_frame, TRAPS) {
+2628   current_frame-&gt;get_local(
+2629     index, VerificationType::integer_type(), CHECK_VERIFY(this));
+2630   current_frame-&gt;push_stack(
+2631     VerificationType::integer_type(), CHECK_VERIFY(this));
+2632 }
+2633 
+2634 void ClassVerifier::verify_lload(u2 index, StackMapFrame* current_frame, TRAPS) {
+2635   current_frame-&gt;get_local_2(
+2636     index, VerificationType::long_type(),
+2637     VerificationType::long2_type(), CHECK_VERIFY(this));
+2638   current_frame-&gt;push_stack_2(
+2639     VerificationType::long_type(),
+2640     VerificationType::long2_type(), CHECK_VERIFY(this));
+2641 }
+2642 
+2643 void ClassVerifier::verify_fload(u2 index, StackMapFrame* current_frame, TRAPS) {
+2644   current_frame-&gt;get_local(
+2645     index, VerificationType::float_type(), CHECK_VERIFY(this));
+2646   current_frame-&gt;push_stack(
+2647     VerificationType::float_type(), CHECK_VERIFY(this));
+2648 }
+2649 
+2650 void ClassVerifier::verify_dload(u2 index, StackMapFrame* current_frame, TRAPS) {
+2651   current_frame-&gt;get_local_2(
+2652     index, VerificationType::double_type(),
+2653     VerificationType::double2_type(), CHECK_VERIFY(this));
+2654   current_frame-&gt;push_stack_2(
+2655     VerificationType::double_type(),
+2656     VerificationType::double2_type(), CHECK_VERIFY(this));
+2657 }
+2658 
+2659 void ClassVerifier::verify_aload(u2 index, StackMapFrame* current_frame, TRAPS) {
+2660   VerificationType type = current_frame-&gt;get_local(
+2661     index, VerificationType::reference_check(), CHECK_VERIFY(this));
+2662   current_frame-&gt;push_stack(type, CHECK_VERIFY(this));
+2663 }
+2664 
+2665 void ClassVerifier::verify_istore(u2 index, StackMapFrame* current_frame, TRAPS) {
+2666   current_frame-&gt;pop_stack(
+2667     VerificationType::integer_type(), CHECK_VERIFY(this));
+2668   current_frame-&gt;set_local(
+2669     index, VerificationType::integer_type(), CHECK_VERIFY(this));
+2670 }
+2671 
+2672 void ClassVerifier::verify_lstore(u2 index, StackMapFrame* current_frame, TRAPS) {
+2673   current_frame-&gt;pop_stack_2(
+2674     VerificationType::long2_type(),
+2675     VerificationType::long_type(), CHECK_VERIFY(this));
+2676   current_frame-&gt;set_local_2(
+2677     index, VerificationType::long_type(),
+2678     VerificationType::long2_type(), CHECK_VERIFY(this));
+2679 }
+2680 
+2681 void ClassVerifier::verify_fstore(u2 index, StackMapFrame* current_frame, TRAPS) {
+2682   current_frame-&gt;pop_stack(VerificationType::float_type(), CHECK_VERIFY(this));
+2683   current_frame-&gt;set_local(
+2684     index, VerificationType::float_type(), CHECK_VERIFY(this));
+2685 }
+2686 
+2687 void ClassVerifier::verify_dstore(u2 index, StackMapFrame* current_frame, TRAPS) {
+2688   current_frame-&gt;pop_stack_2(
+2689     VerificationType::double2_type(),
+2690     VerificationType::double_type(), CHECK_VERIFY(this));
+2691   current_frame-&gt;set_local_2(
+2692     index, VerificationType::double_type(),
+2693     VerificationType::double2_type(), CHECK_VERIFY(this));
+2694 }
+2695 
+2696 void ClassVerifier::verify_astore(u2 index, StackMapFrame* current_frame, TRAPS) {
+2697   VerificationType type = current_frame-&gt;pop_stack(
+2698     VerificationType::reference_check(), CHECK_VERIFY(this));
+2699   current_frame-&gt;set_local(index, type, CHECK_VERIFY(this));
+2700 }
+2701 
+2702 void ClassVerifier::verify_iinc(u2 index, StackMapFrame* current_frame, TRAPS) {
+2703   VerificationType type = current_frame-&gt;get_local(
+2704     index, VerificationType::integer_type(), CHECK_VERIFY(this));
+2705   current_frame-&gt;set_local(index, type, CHECK_VERIFY(this));
+2706 }
+2707 
+2708 void ClassVerifier::verify_return_value(
+2709     VerificationType return_type, VerificationType type, u2 bci,
+2710     StackMapFrame* current_frame, TRAPS) {
+2711   if (return_type == VerificationType::bogus_type()) {
+2712     verify_error(ErrorContext::bad_type(bci,
+2713         current_frame-&gt;stack_top_ctx(), TypeOrigin::signature(return_type)),
+2714         "Method expects a return value");
+2715     return;
+2716   }
+2717   bool match = return_type.is_assignable_from(type, this, CHECK_VERIFY(this));
+2718   if (!match) {
+2719     verify_error(ErrorContext::bad_type(bci,
+2720         current_frame-&gt;stack_top_ctx(), TypeOrigin::signature(return_type)),
+2721         "Bad return type");
+2722     return;
+2723   }
+2724 }
+2725 
+2726 // The verifier creates symbols which are substrings of Symbols.
+2727 // These are stored in the verifier until the end of verification so that
+2728 // they can be reference counted.
+2729 Symbol* ClassVerifier::create_temporary_symbol(const Symbol *s, int begin,
+2730                                                int end, TRAPS) {
+2731   Symbol* sym = SymbolTable::new_symbol(s, begin, end, CHECK_NULL);
+2732   _symbols-&gt;push(sym);
+2733   return sym;
+2734 }
+2735 
+2736 Symbol* ClassVerifier::create_temporary_symbol(const char *s, int length, TRAPS) {
+2737   Symbol* sym = SymbolTable::new_symbol(s, length, CHECK_NULL);
+2738   _symbols-&gt;push(sym);
+2739   return sym;
+2740 }
+</pre></body></html>
