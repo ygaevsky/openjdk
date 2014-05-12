@@ -1,0 +1,10 @@
+--- old/src/share/vm/opto/library_call.cpp	2014-05-12 20:25:44.969320200 +0400
++++ new/src/share/vm/opto/library_call.cpp	2014-05-12 20:25:44.563056700 +0400
+@@ -420,7 +420,6 @@
+     return NULL;
+ 
+   case vmIntrinsics::_getCallerClass:
+-    if (!UseNewReflection)  return NULL;
+     if (!InlineReflectionGetCallerClass)  return NULL;
+     if (SystemDictionary::reflect_CallerSensitive_klass() == NULL)  return NULL;
+     break;

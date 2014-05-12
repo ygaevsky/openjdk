@@ -1,0 +1,211 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/runtime </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/runtime/globals.hpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+3637           "NON_TIERED number of method invocations/branches (expressed as " \
+3638           "% of CompileThreshold) before profiling in the interpreter")     \
+3639                                                                             \
+3640   develop(intx, MaxRecompilationSearchLength,    10,                        \
+3641           "The maximum number of frames to inspect when searching for "     \
+3642           "recompilee")                                                     \
+3643                                                                             \
+3644   develop(intx, MaxInterpretedSearchLength,     3,                          \
+3645           "The maximum number of interpreted frames to skip when searching "\
+3646           "for recompilee")                                                 \
+3647                                                                             \
+3648   develop(intx, DesiredMethodLimit,  8000,                                  \
+3649           "The desired maximum method size (in bytecodes) after inlining")  \
+3650                                                                             \
+3651   develop(intx, HugeMethodLimit,  8000,                                     \
+3652           "Don't compile methods larger than this if "                      \
+3653           "+DontCompileHugeMethods")                                        \
+3654                                                                             \
+3655   /* New JDK 1.4 reflection implementation */                               \
+3656                                                                             \
+<span class="removed">3657   develop(bool, UseNewReflection, true,                                     \</span>
+<span class="removed">3658           "Temporary flag for transition to reflection based on dynamic "   \</span>
+<span class="removed">3659           "bytecode generation in 1.4; can no longer be turned off in 1.4 " \</span>
+<span class="removed">3660           "JDK, and is unneeded in 1.3 JDK, but marks most places VM "      \</span>
+<span class="removed">3661           "changes were needed")                                            \</span>
+<span class="removed">3662                                                                             \</span>
+<span class="removed">3663   develop(bool, VerifyReflectionBytecodes, false,                           \</span>
+<span class="removed">3664           "Force verification of 1.4 reflection bytecodes. Does not work "  \</span>
+<span class="removed">3665           "in situations like that described in 4486457 or for "            \</span>
+<span class="removed">3666           "constructors generated for serialization, so can not be enabled "\</span>
+<span class="removed">3667           "in product.")                                                    \</span>
+<span class="removed">3668                                                                             \</span>
+<span class="removed">3669   product(bool, ReflectionWrapResolutionErrors, true,                       \</span>
+<span class="removed">3670           "Temporary flag for transition to AbstractMethodError wrapped "   \</span>
+<span class="removed">3671           "in InvocationTargetException. See 6531596")                      \</span>
+<span class="removed">3672                                                                             \</span>
+3673   develop(intx, FastSuperclassLimit, 8,                                     \
+3674           "Depth of hardwired instanceof accelerator array")                \
+3675                                                                             \
+3676   /* Properties for Java libraries  */                                      \
+3677                                                                             \
+3678   product(uintx, MaxDirectMemorySize, 0,                                    \
+3679           "Maximum total size of NIO direct-buffer allocations")            \
+3680                                                                             \
+3681   /* Flags used for temporary code during development  */                   \
+3682                                                                             \
+3683   diagnostic(bool, UseNewCode, false,                                       \
+3684           "Testing Only: Use the new version while testing")                \
+3685                                                                             \
+3686   diagnostic(bool, UseNewCode2, false,                                      \
+3687           "Testing Only: Use the new version while testing")                \
+3688                                                                             \
+3689   diagnostic(bool, UseNewCode3, false,                                      \
+3690           "Testing Only: Use the new version while testing")                \
+3691                                                                             \
+3692   /* flags for performance data collection */                               \
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+3637           "NON_TIERED number of method invocations/branches (expressed as " \
+3638           "% of CompileThreshold) before profiling in the interpreter")     \
+3639                                                                             \
+3640   develop(intx, MaxRecompilationSearchLength,    10,                        \
+3641           "The maximum number of frames to inspect when searching for "     \
+3642           "recompilee")                                                     \
+3643                                                                             \
+3644   develop(intx, MaxInterpretedSearchLength,     3,                          \
+3645           "The maximum number of interpreted frames to skip when searching "\
+3646           "for recompilee")                                                 \
+3647                                                                             \
+3648   develop(intx, DesiredMethodLimit,  8000,                                  \
+3649           "The desired maximum method size (in bytecodes) after inlining")  \
+3650                                                                             \
+3651   develop(intx, HugeMethodLimit,  8000,                                     \
+3652           "Don't compile methods larger than this if "                      \
+3653           "+DontCompileHugeMethods")                                        \
+3654                                                                             \
+3655   /* New JDK 1.4 reflection implementation */                               \
+3656                                                                             \
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+3657   develop(intx, FastSuperclassLimit, 8,                                     \
+3658           "Depth of hardwired instanceof accelerator array")                \
+3659                                                                             \
+3660   /* Properties for Java libraries  */                                      \
+3661                                                                             \
+3662   product(uintx, MaxDirectMemorySize, 0,                                    \
+3663           "Maximum total size of NIO direct-buffer allocations")            \
+3664                                                                             \
+3665   /* Flags used for temporary code during development  */                   \
+3666                                                                             \
+3667   diagnostic(bool, UseNewCode, false,                                       \
+3668           "Testing Only: Use the new version while testing")                \
+3669                                                                             \
+3670   diagnostic(bool, UseNewCode2, false,                                      \
+3671           "Testing Only: Use the new version while testing")                \
+3672                                                                             \
+3673   diagnostic(bool, UseNewCode3, false,                                      \
+3674           "Testing Only: Use the new version while testing")                \
+3675                                                                             \
+3676   /* flags for performance data collection */                               \
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>

@@ -1,0 +1,267 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/prims </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/prims/jni.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 526 JNI_END
+ 527 
+ 528 
+ 529 DT_RETURN_MARK_DECL(ToReflectedMethod, jobject
+ 530                     , HOTSPOT_JNI_TOREFLECTEDMETHOD_RETURN(_ret_ref));
+ 531 
+ 532 JNI_ENTRY(jobject, jni_ToReflectedMethod(JNIEnv *env, jclass cls, jmethodID method_id, jboolean isStatic))
+ 533   JNIWrapper("ToReflectedMethod");
+ 534 
+ 535   HOTSPOT_JNI_TOREFLECTEDMETHOD_ENTRY(env, cls, (uintptr_t) method_id, isStatic);
+ 536 
+ 537   jobject ret = NULL;
+ 538   DT_RETURN_MARK(ToReflectedMethod, jobject, (const jobject&amp;)ret);
+ 539 
+ 540   methodHandle m (THREAD, Method::resolve_jmethod_id(method_id));
+ 541   assert(m-&gt;is_static() == (isStatic != 0), "jni_ToReflectedMethod access flags doesn't match");
+ 542   oop reflection_method;
+ 543   if (m-&gt;is_initializer()) {
+ 544     reflection_method = Reflection::new_constructor(m, CHECK_NULL);
+ 545   } else {
+<span class="changed"> 546     reflection_method = Reflection::new_method(m, UseNewReflection, false, CHECK_NULL);</span>
+ 547   }
+ 548   ret = JNIHandles::make_local(env, reflection_method);
+ 549   return ret;
+ 550 JNI_END
+ 551 
+ 552 DT_RETURN_MARK_DECL(GetSuperclass, jclass
+ 553                     , HOTSPOT_JNI_GETSUPERCLASS_RETURN(_ret_ref));
+ 554 
+ 555 JNI_ENTRY(jclass, jni_GetSuperclass(JNIEnv *env, jclass sub))
+ 556   JNIWrapper("GetSuperclass");
+ 557 
+ 558   HOTSPOT_JNI_GETSUPERCLASS_ENTRY(env, sub);
+ 559 
+ 560   jclass obj = NULL;
+ 561   DT_RETURN_MARK(GetSuperclass, jclass, (const jclass&amp;)obj);
+ 562 
+ 563   oop mirror = JNIHandles::resolve_non_null(sub);
+ 564   // primitive classes return NULL
+ 565   if (java_lang_Class::is_primitive(mirror)) return NULL;
+ 566 
+
+</pre><hr></hr><pre>
+2254   jobject ret = NULL;
+2255   DT_RETURN_MARK(ToReflectedField, jobject, (const jobject&amp;)ret);
+2256 
+2257   fieldDescriptor fd;
+2258   bool found = false;
+2259   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
+2260 
+2261   assert(jfieldIDWorkaround::is_static_jfieldID(fieldID) == (isStatic != 0), "invalid fieldID");
+2262 
+2263   if (isStatic) {
+2264     // Static field. The fieldID a JNIid specifying the field holder and the offset within the Klass*.
+2265     JNIid* id = jfieldIDWorkaround::from_static_jfieldID(fieldID);
+2266     assert(id-&gt;is_static_field_id(), "invalid static field id");
+2267     found = id-&gt;find_local_field(&amp;fd);
+2268   } else {
+2269     // Non-static field. The fieldID is really the offset of the field within the instanceOop.
+2270     int offset = jfieldIDWorkaround::from_instance_jfieldID(k, fieldID);
+2271     found = InstanceKlass::cast(k)-&gt;find_field_from_offset(offset, false, &amp;fd);
+2272   }
+2273   assert(found, "bad fieldID passed into jni_ToReflectedField");
+<span class="changed">2274   oop reflected = Reflection::new_field(&amp;fd, UseNewReflection, CHECK_NULL);</span>
+2275   ret = JNIHandles::make_local(env, reflected);
+2276   return ret;
+2277 JNI_END
+2278 
+2279 
+2280 //
+2281 // Accessing Static Fields
+2282 //
+2283 DT_RETURN_MARK_DECL(GetStaticFieldID, jfieldID
+2284                     , HOTSPOT_JNI_GETSTATICFIELDID_RETURN((uintptr_t)_ret_ref));
+2285 
+2286 JNI_ENTRY(jfieldID, jni_GetStaticFieldID(JNIEnv *env, jclass clazz,
+2287           const char *name, const char *sig))
+2288   JNIWrapper("GetStaticFieldID");
+2289   HOTSPOT_JNI_GETSTATICFIELDID_ENTRY(env, clazz, (char *) name, (char *) sig);
+2290   jfieldID ret = NULL;
+2291   DT_RETURN_MARK(GetStaticFieldID, jfieldID, (const jfieldID&amp;)ret);
+2292 
+2293   // The class should have been loaded (we have an instance of the class
+2294   // passed in) so the field and signature should already be in the symbol
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 526 JNI_END
+ 527 
+ 528 
+ 529 DT_RETURN_MARK_DECL(ToReflectedMethod, jobject
+ 530                     , HOTSPOT_JNI_TOREFLECTEDMETHOD_RETURN(_ret_ref));
+ 531 
+ 532 JNI_ENTRY(jobject, jni_ToReflectedMethod(JNIEnv *env, jclass cls, jmethodID method_id, jboolean isStatic))
+ 533   JNIWrapper("ToReflectedMethod");
+ 534 
+ 535   HOTSPOT_JNI_TOREFLECTEDMETHOD_ENTRY(env, cls, (uintptr_t) method_id, isStatic);
+ 536 
+ 537   jobject ret = NULL;
+ 538   DT_RETURN_MARK(ToReflectedMethod, jobject, (const jobject&amp;)ret);
+ 539 
+ 540   methodHandle m (THREAD, Method::resolve_jmethod_id(method_id));
+ 541   assert(m-&gt;is_static() == (isStatic != 0), "jni_ToReflectedMethod access flags doesn't match");
+ 542   oop reflection_method;
+ 543   if (m-&gt;is_initializer()) {
+ 544     reflection_method = Reflection::new_constructor(m, CHECK_NULL);
+ 545   } else {
+<span class="changed"> 546     reflection_method = Reflection::new_method(m, false, CHECK_NULL);</span>
+ 547   }
+ 548   ret = JNIHandles::make_local(env, reflection_method);
+ 549   return ret;
+ 550 JNI_END
+ 551 
+ 552 DT_RETURN_MARK_DECL(GetSuperclass, jclass
+ 553                     , HOTSPOT_JNI_GETSUPERCLASS_RETURN(_ret_ref));
+ 554 
+ 555 JNI_ENTRY(jclass, jni_GetSuperclass(JNIEnv *env, jclass sub))
+ 556   JNIWrapper("GetSuperclass");
+ 557 
+ 558   HOTSPOT_JNI_GETSUPERCLASS_ENTRY(env, sub);
+ 559 
+ 560   jclass obj = NULL;
+ 561   DT_RETURN_MARK(GetSuperclass, jclass, (const jclass&amp;)obj);
+ 562 
+ 563   oop mirror = JNIHandles::resolve_non_null(sub);
+ 564   // primitive classes return NULL
+ 565   if (java_lang_Class::is_primitive(mirror)) return NULL;
+ 566 
+
+</pre><hr></hr><pre>
+2254   jobject ret = NULL;
+2255   DT_RETURN_MARK(ToReflectedField, jobject, (const jobject&amp;)ret);
+2256 
+2257   fieldDescriptor fd;
+2258   bool found = false;
+2259   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
+2260 
+2261   assert(jfieldIDWorkaround::is_static_jfieldID(fieldID) == (isStatic != 0), "invalid fieldID");
+2262 
+2263   if (isStatic) {
+2264     // Static field. The fieldID a JNIid specifying the field holder and the offset within the Klass*.
+2265     JNIid* id = jfieldIDWorkaround::from_static_jfieldID(fieldID);
+2266     assert(id-&gt;is_static_field_id(), "invalid static field id");
+2267     found = id-&gt;find_local_field(&amp;fd);
+2268   } else {
+2269     // Non-static field. The fieldID is really the offset of the field within the instanceOop.
+2270     int offset = jfieldIDWorkaround::from_instance_jfieldID(k, fieldID);
+2271     found = InstanceKlass::cast(k)-&gt;find_field_from_offset(offset, false, &amp;fd);
+2272   }
+2273   assert(found, "bad fieldID passed into jni_ToReflectedField");
+<span class="changed">2274   oop reflected = Reflection::new_field(&amp;fd, CHECK_NULL);</span>
+2275   ret = JNIHandles::make_local(env, reflected);
+2276   return ret;
+2277 JNI_END
+2278 
+2279 
+2280 //
+2281 // Accessing Static Fields
+2282 //
+2283 DT_RETURN_MARK_DECL(GetStaticFieldID, jfieldID
+2284                     , HOTSPOT_JNI_GETSTATICFIELDID_RETURN((uintptr_t)_ret_ref));
+2285 
+2286 JNI_ENTRY(jfieldID, jni_GetStaticFieldID(JNIEnv *env, jclass clazz,
+2287           const char *name, const char *sig))
+2288   JNIWrapper("GetStaticFieldID");
+2289   HOTSPOT_JNI_GETSTATICFIELDID_ENTRY(env, clazz, (char *) name, (char *) sig);
+2290   jfieldID ret = NULL;
+2291   DT_RETURN_MARK(GetStaticFieldID, jfieldID, (const jfieldID&amp;)ret);
+2292 
+2293   // The class should have been loaded (we have an instance of the class
+2294   // passed in) so the field and signature should already be in the symbol
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>

@@ -1,0 +1,11 @@
+--- old/src/share/vm/runtime/vframe.cpp	2014-05-12 20:25:57.282268200 +0400
++++ new/src/share/vm/runtime/vframe.cpp	2014-05-12 20:25:56.969756400 +0400
+@@ -471,7 +471,7 @@
+ 
+ void vframeStreamCommon::skip_reflection_related_frames() {
+   while (!at_end() &&
+-         (JDK_Version::is_gte_jdk14x_version() && UseNewReflection &&
++         (JDK_Version::is_gte_jdk14x_version() &&
+           (method()->method_holder()->is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass()) ||
+            method()->method_holder()->is_subclass_of(SystemDictionary::reflect_ConstructorAccessorImpl_klass())))) {
+     next();

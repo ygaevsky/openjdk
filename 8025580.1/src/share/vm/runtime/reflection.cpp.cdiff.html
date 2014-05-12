@@ -1,0 +1,324 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Cdiff src/share/vm/runtime/reflection.cpp</title>
+</head>
+<body id="SUNWwebrev">
+<h2>src/share/vm/runtime/reflection.cpp</h2>
+        <a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+        <pre>
+<hr /><span class="oldmarker">*** 464,474 ****</span>
+      return true;
+    }
+    // New (1.4) reflection implementation. Allow all accesses from
+    // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
+    if (   JDK_Version::is_gte_jdk14x_version()
+<span class="removed">-       &amp;&amp; UseNewReflection</span>
+        &amp;&amp; current_class-&gt;is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+      return true;
+    }
+  
+    return can_relax_access_check_for(current_class, new_class, classloader_only);
+<span class="newmarker">--- 464,473 ----</span>
+<hr /><span class="oldmarker">*** 569,579 ****</span>
+    }
+  
+    // New (1.4) reflection implementation. Allow all accesses from
+    // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
+    if (   JDK_Version::is_gte_jdk14x_version()
+<span class="removed">-       &amp;&amp; UseNewReflection</span>
+        &amp;&amp; current_class-&gt;is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+      return true;
+    }
+  
+    return can_relax_access_check_for(
+<span class="newmarker">--- 568,577 ----</span>
+<hr /><span class="oldmarker">*** 706,716 ****</span>
+    oop nt = result-&gt;java_mirror();
+    return Handle(THREAD, nt);
+  }
+  
+  
+<span class="changed">! oop Reflection::new_method(methodHandle method, bool intern_name, bool for_constant_pool_access, TRAPS) {</span>
+    // In jdk1.2.x, getMethods on an interface erroneously includes &lt;clinit&gt;, thus the complicated assert.
+    // Also allow sun.reflect.ConstantPool to refer to &lt;clinit&gt; methods as java.lang.reflect.Methods.
+    assert(!method()-&gt;is_initializer() ||
+           (for_constant_pool_access &amp;&amp; method()-&gt;is_static()) ||
+           (method()-&gt;name() == vmSymbols::class_initializer_name()
+<span class="newmarker">--- 704,714 ----</span>
+    oop nt = result-&gt;java_mirror();
+    return Handle(THREAD, nt);
+  }
+  
+  
+<span class="changed">! oop Reflection::new_method(methodHandle method, bool for_constant_pool_access, TRAPS) {</span>
+    // In jdk1.2.x, getMethods on an interface erroneously includes &lt;clinit&gt;, thus the complicated assert.
+    // Also allow sun.reflect.ConstantPool to refer to &lt;clinit&gt; methods as java.lang.reflect.Methods.
+    assert(!method()-&gt;is_initializer() ||
+           (for_constant_pool_access &amp;&amp; method()-&gt;is_static()) ||
+           (method()-&gt;name() == vmSymbols::class_initializer_name()
+<hr /><span class="oldmarker">*** 729,746 ****</span>
+    objArrayHandle exception_types = get_exception_types(method, CHECK_NULL);
+  
+    if (exception_types.is_null()) return NULL;
+  
+    Symbol*  method_name = method-&gt;name();
+<span class="removed">-   Handle name;</span>
+<span class="removed">-   if (intern_name) {</span>
+<span class="removed">-     // intern_name is only true with UseNewReflection</span>
+      oop name_oop = StringTable::intern(method_name, CHECK_NULL);
+<span class="changed">!     name = Handle(THREAD, name_oop);</span>
+<span class="changed">!   } else {</span>
+<span class="changed">!     name = java_lang_String::create_from_symbol(method_name, CHECK_NULL);</span>
+<span class="changed">!   }</span>
+    if (name == NULL) return NULL;
+  
+    int modifiers = method-&gt;access_flags().as_int() &amp; JVM_RECOGNIZED_METHOD_MODIFIERS;
+  
+    Handle mh = java_lang_reflect_Method::create(CHECK_NULL);
+<span class="newmarker">--- 727,738 ----</span>
+    objArrayHandle exception_types = get_exception_types(method, CHECK_NULL);
+  
+    if (exception_types.is_null()) return NULL;
+  
+    Symbol*  method_name = method-&gt;name();
+    oop name_oop = StringTable::intern(method_name, CHECK_NULL);
+<span class="changed">!   Handle name = Handle(THREAD, name_oop);</span>
+    if (name == NULL) return NULL;
+  
+    int modifiers = method-&gt;access_flags().as_int() &amp; JVM_RECOGNIZED_METHOD_MODIFIERS;
+  
+    Handle mh = java_lang_reflect_Method::create(CHECK_NULL);
+<hr /><span class="oldmarker">*** 823,842 ****</span>
+    }
+    return ch();
+  }
+  
+  
+<span class="changed">! oop Reflection::new_field(fieldDescriptor* fd, bool intern_name, TRAPS) {</span>
+    Symbol*  field_name = fd-&gt;name();
+<span class="removed">-   Handle name;</span>
+<span class="removed">-   if (intern_name) {</span>
+<span class="removed">-     // intern_name is only true with UseNewReflection</span>
+      oop name_oop = StringTable::intern(field_name, CHECK_NULL);
+<span class="changed">!     name = Handle(THREAD, name_oop);</span>
+<span class="changed">!   } else {</span>
+<span class="changed">!     name = java_lang_String::create_from_symbol(field_name, CHECK_NULL);</span>
+<span class="changed">!   }</span>
+    Symbol*  signature  = fd-&gt;signature();
+    instanceKlassHandle  holder    (THREAD, fd-&gt;field_holder());
+    Handle type = new_type(signature, holder, CHECK_NULL);
+    Handle rh  = java_lang_reflect_Field::create(CHECK_NULL);
+  
+<span class="newmarker">--- 815,828 ----</span>
+    }
+    return ch();
+  }
+  
+  
+<span class="changed">! oop Reflection::new_field(fieldDescriptor* fd, TRAPS) {</span>
+    Symbol*  field_name = fd-&gt;name();
+    oop name_oop = StringTable::intern(field_name, CHECK_NULL);
+<span class="changed">!   Handle name = Handle(THREAD, name_oop);</span>
+    Symbol*  signature  = fd-&gt;signature();
+    instanceKlassHandle  holder    (THREAD, fd-&gt;field_holder());
+    Handle type = new_type(signature, holder, CHECK_NULL);
+    Handle rh  = java_lang_reflect_Field::create(CHECK_NULL);
+  
+<hr /><span class="oldmarker">*** 931,942 ****</span>
+        method = reflected_method;
+      } else {
+        // resolve based on the receiver
+        if (reflected_method-&gt;method_holder()-&gt;is_interface()) {
+          // resolve interface call
+<span class="changed">!         if (ReflectionWrapResolutionErrors) {</span>
+<span class="changed">!           // new default: 6531596</span>
+            // Match resolution errors with those thrown due to reflection inlining
+            // Linktime resolution &amp; IllegalAccessCheck already done by Class.getMethod()
+            method = resolve_interface_call(klass, reflected_method, target_klass, receiver, THREAD);
+            if (HAS_PENDING_EXCEPTION) {
+            // Method resolution threw an exception; wrap it in an InvocationTargetException
+<span class="newmarker">--- 917,927 ----</span>
+        method = reflected_method;
+      } else {
+        // resolve based on the receiver
+        if (reflected_method-&gt;method_holder()-&gt;is_interface()) {
+          // resolve interface call
+<span class="changed">!         //</span>
+          // Match resolution errors with those thrown due to reflection inlining
+          // Linktime resolution &amp; IllegalAccessCheck already done by Class.getMethod()
+          method = resolve_interface_call(klass, reflected_method, target_klass, receiver, THREAD);
+          if (HAS_PENDING_EXCEPTION) {
+          // Method resolution threw an exception; wrap it in an InvocationTargetException
+<hr /><span class="oldmarker">*** 951,963 ****</span>
+              THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
+                  vmSymbols::throwable_void_signature(),
+                  &amp;args);
+            }
+          } else {
+<span class="removed">-           method = resolve_interface_call(klass, reflected_method, target_klass, receiver, CHECK_(NULL));</span>
+<span class="removed">-         }</span>
+<span class="removed">-       }  else {</span>
+          // if the method can be overridden, we resolve using the vtable index.
+          assert(!reflected_method-&gt;has_itable_index(), "");
+          int index = reflected_method-&gt;vtable_index();
+          method = reflected_method;
+          if (index != Method::nonvirtual_vtable_index) {
+<span class="newmarker">--- 936,945 ----</span>
+<hr /><span class="oldmarker">*** 968,995 ****</span>
+          }
+          if (!method.is_null()) {
+            // Check for abstract methods as well
+            if (method-&gt;is_abstract()) {
+              // new default: 6531596
+<span class="removed">-             if (ReflectionWrapResolutionErrors) {</span>
+                ResourceMark rm(THREAD);
+                Handle h_origexception = Exceptions::new_exception(THREAD,
+                       vmSymbols::java_lang_AbstractMethodError(),
+                       Method::name_and_sig_as_C_string(target_klass(),
+                       method-&gt;name(),
+                       method-&gt;signature()));
+                JavaCallArguments args(h_origexception);
+                THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
+                  vmSymbols::throwable_void_signature(),
+                  &amp;args);
+<span class="removed">-             } else {</span>
+<span class="removed">-               ResourceMark rm(THREAD);</span>
+<span class="removed">-               THROW_MSG_0(vmSymbols::java_lang_AbstractMethodError(),</span>
+<span class="removed">-                         Method::name_and_sig_as_C_string(target_klass(),</span>
+<span class="removed">-                                                                 method-&gt;name(),</span>
+<span class="removed">-                                                                 method-&gt;signature()));</span>
+<span class="removed">-             }</span>
+            }
+          }
+        }
+      }
+    }
+<span class="newmarker">--- 950,969 ----</span>
+<hr /><span class="oldmarker">*** 1004,1014 ****</span>
+                                                          reflected_method-&gt;signature()));
+    }
+  
+    // In the JDK 1.4 reflection implementation, the security check is
+    // done at the Java level
+<span class="changed">!   if (!(JDK_Version::is_gte_jdk14x_version() &amp;&amp; UseNewReflection)) {</span>
+  
+    // Access checking (unless overridden by Method)
+    if (!override) {
+      if (!(klass-&gt;is_public() &amp;&amp; reflected_method-&gt;is_public())) {
+        bool access = Reflection::reflect_check_access(klass(), reflected_method-&gt;access_flags(), target_klass(), is_method_invoke, CHECK_NULL);
+<span class="newmarker">--- 978,988 ----</span>
+                                                          reflected_method-&gt;signature()));
+    }
+  
+    // In the JDK 1.4 reflection implementation, the security check is
+    // done at the Java level
+<span class="changed">!   if (!JDK_Version::is_gte_jdk14x_version()) {</span>
+  
+    // Access checking (unless overridden by Method)
+    if (!override) {
+      if (!(klass-&gt;is_public() &amp;&amp; reflected_method-&gt;is_public())) {
+        bool access = Reflection::reflect_check_access(klass(), reflected_method-&gt;access_flags(), target_klass(), is_method_invoke, CHECK_NULL);
+<hr /><span class="oldmarker">*** 1016,1026 ****</span>
+          return NULL; // exception
+        }
+      }
+    }
+  
+<span class="changed">!   } // !(Universe::is_gte_jdk14x_version() &amp;&amp; UseNewReflection)</span>
+  
+    assert(ptypes-&gt;is_objArray(), "just checking");
+    int args_len = args.is_null() ? 0 : args-&gt;length();
+    // Check number of arguments
+    if (ptypes-&gt;length() != args_len) {
+<span class="newmarker">--- 990,1000 ----</span>
+          return NULL; // exception
+        }
+      }
+    }
+  
+<span class="changed">!   } // !Universe::is_gte_jdk14x_version()</span>
+  
+    assert(ptypes-&gt;is_objArray(), "just checking");
+    int args_len = args.is_null() ? 0 : args-&gt;length();
+    // Check number of arguments
+    if (ptypes-&gt;length() != args_len) {
+</pre></body></html>
+

@@ -1,0 +1,181 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/oops </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/oops/method.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+1000 // give advice about whether this Method* should be cached or not
+1001 bool Method::should_not_be_cached() const {
+1002   if (is_old()) {
+1003     // This method has been redefined. It is either EMCP or obsolete
+1004     // and we don't want to cache it because that would pin the method
+1005     // down and prevent it from being collectible if and when it
+1006     // finishes executing.
+1007     return true;
+1008   }
+1009 
+1010   // caching this method should be just fine
+1011   return false;
+1012 }
+1013 
+1014 
+1015 /**
+1016  *  Returns true if this is one of the specially treated methods for
+1017  *  security related stack walks (like Reflection.getCallerClass).
+1018  */
+1019 bool Method::is_ignored_by_security_stack_walk() const {
+<span class="changed">1020   const bool use_new_reflection = JDK_Version::is_gte_jdk14x_version() &amp;&amp; UseNewReflection;</span>
+1021 
+1022   if (intrinsic_id() == vmIntrinsics::_invoke) {
+1023     // This is Method.invoke() -- ignore it
+1024     return true;
+1025   }
+1026   if (use_new_reflection &amp;&amp;
+1027       method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass())) {
+1028     // This is an auxilary frame -- ignore it
+1029     return true;
+1030   }
+1031   if (is_method_handle_intrinsic() || is_compiled_lambda_form()) {
+1032     // This is an internal adapter frame for method handles -- ignore it
+1033     return true;
+1034   }
+1035   return false;
+1036 }
+1037 
+1038 
+1039 // Constant pool structure for invoke methods:
+1040 enum {
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+1000 // give advice about whether this Method* should be cached or not
+1001 bool Method::should_not_be_cached() const {
+1002   if (is_old()) {
+1003     // This method has been redefined. It is either EMCP or obsolete
+1004     // and we don't want to cache it because that would pin the method
+1005     // down and prevent it from being collectible if and when it
+1006     // finishes executing.
+1007     return true;
+1008   }
+1009 
+1010   // caching this method should be just fine
+1011   return false;
+1012 }
+1013 
+1014 
+1015 /**
+1016  *  Returns true if this is one of the specially treated methods for
+1017  *  security related stack walks (like Reflection.getCallerClass).
+1018  */
+1019 bool Method::is_ignored_by_security_stack_walk() const {
+<span class="changed">1020   const bool use_new_reflection = JDK_Version::is_gte_jdk14x_version();</span>
+1021 
+1022   if (intrinsic_id() == vmIntrinsics::_invoke) {
+1023     // This is Method.invoke() -- ignore it
+1024     return true;
+1025   }
+1026   if (use_new_reflection &amp;&amp;
+1027       method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass())) {
+1028     // This is an auxilary frame -- ignore it
+1029     return true;
+1030   }
+1031   if (is_method_handle_intrinsic() || is_compiled_lambda_form()) {
+1032     // This is an internal adapter frame for method handles -- ignore it
+1033     return true;
+1034   }
+1035   return false;
+1036 }
+1037 
+1038 
+1039 // Constant pool structure for invoke methods:
+1040 enum {
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>

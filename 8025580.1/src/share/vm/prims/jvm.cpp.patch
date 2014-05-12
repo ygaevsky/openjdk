@@ -1,0 +1,46 @@
+--- old/src/share/vm/prims/jvm.cpp	2014-05-12 20:25:48.563205300 +0400
++++ new/src/share/vm/prims/jvm.cpp	2014-05-12 20:25:48.188186500 +0400
+@@ -1836,7 +1836,7 @@
+ 
+     if (!publicOnly || fs.access_flags().is_public()) {
+       fd.reinitialize(k(), fs.index());
+-      oop field = Reflection::new_field(&fd, UseNewReflection, CHECK_NULL);
++      oop field = Reflection::new_field(&fd, CHECK_NULL);
+       result->obj_at_put(out_idx, field);
+       ++out_idx;
+     }
+@@ -1914,7 +1914,7 @@
+       if (want_constructor) {
+         m = Reflection::new_constructor(method, CHECK_NULL);
+       } else {
+-        m = Reflection::new_method(method, UseNewReflection, false, CHECK_NULL);
++        m = Reflection::new_method(method, false, CHECK_NULL);
+       }
+       result->obj_at_put(i, m);
+     }
+@@ -2037,7 +2037,7 @@
+   }
+   oop method;
+   if (!m->is_initializer() || m->is_static()) {
+-    method = Reflection::new_method(m, true, true, CHECK_NULL);
++    method = Reflection::new_method(m, true, CHECK_NULL);
+   } else {
+     method = Reflection::new_constructor(m, CHECK_NULL);
+   }
+@@ -2087,7 +2087,7 @@
+   if (target_klass == NULL) {
+     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
+   }
+-  oop field = Reflection::new_field(&fd, true, CHECK_NULL);
++  oop field = Reflection::new_field(&fd, CHECK_NULL);
+   return JNIHandles::make_local(field);
+ }
+ 
+@@ -3502,7 +3502,6 @@
+ 
+ JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
+   for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
+-    // UseNewReflection
+     vfst.skip_reflection_related_frames(); // Only needed for 1.4 reflection
+     oop loader = vfst.method()->method_holder()->class_loader();
+     if (loader != NULL) {
