@@ -1,0 +1,18 @@
+--- old/src/share/vm/classfile/systemDictionary.cpp	2014-05-14 19:46:41.205613700 +0400
++++ new/src/share/vm/classfile/systemDictionary.cpp	2014-05-14 19:46:40.890502100 +0400
+@@ -600,7 +600,6 @@
+ 
+   Ticks class_load_start_time = Ticks::now();
+ 
+-  // UseNewReflection
+   // Fix for 4474172; see evaluation for more details
+   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
+   ClassLoaderData *loader_data = register_loader(class_loader, CHECK_NULL);
+@@ -894,7 +893,6 @@
+                               Handle protection_domain,
+                               TRAPS) {
+ 
+-  // UseNewReflection
+   // The result of this call should be consistent with the result
+   // of the call to resolve_instance_class_or_null().
+   // See evaluation 6790209 and 4474172 for more details.

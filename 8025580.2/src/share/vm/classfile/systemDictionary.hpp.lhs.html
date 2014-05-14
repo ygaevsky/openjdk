@@ -1,0 +1,862 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+    <script type="text/javascript" src="../../../../ancnav.js"></script>
+    </head>
+    <body id="SUNWwebrev" onkeypress="keypress(event);">
+    <a name="0"></a>
+    <pre></pre><hr></hr>
+<pre>
+   1 /*
+   2  * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  *
+  23  */
+  24 
+  25 #ifndef SHARE_VM_CLASSFILE_SYSTEMDICTIONARY_HPP
+  26 #define SHARE_VM_CLASSFILE_SYSTEMDICTIONARY_HPP
+  27 
+  28 #include "classfile/classFileStream.hpp"
+  29 #include "classfile/classLoader.hpp"
+  30 #include "oops/objArrayOop.hpp"
+  31 #include "oops/symbol.hpp"
+  32 #include "runtime/java.hpp"
+  33 #include "runtime/reflectionUtils.hpp"
+  34 #include "utilities/hashtable.hpp"
+  35 #include "utilities/hashtable.inline.hpp"
+  36 
+  37 
+  38 // The system dictionary stores all loaded classes and maps:
+  39 //
+  40 //   [class name,class loader] -&gt; class   i.e.  [Symbol*,oop] -&gt; Klass*
+  41 //
+  42 // Classes are loaded lazily. The default VM class loader is
+  43 // represented as NULL.
+  44 
+  45 // The underlying data structure is an open hash table with a fixed number
+  46 // of buckets. During loading the loader object is locked, (for the VM loader
+  47 // a private lock object is used). Class loading can thus be done concurrently,
+  48 // but only by different loaders.
+  49 //
+  50 // During loading a placeholder (name, loader) is temporarily placed in
+  51 // a side data structure, and is used to detect ClassCircularityErrors
+  52 // and to perform verification during GC.  A GC can occur in the midst
+  53 // of class loading, as we call out to Java, have to take locks, etc.
+  54 //
+  55 // When class loading is finished, a new entry is added to the system
+  56 // dictionary and the place holder is removed. Note that the protection
+  57 // domain field of the system dictionary has not yet been filled in when
+  58 // the "real" system dictionary entry is created.
+  59 //
+  60 // Clients of this class who are interested in finding if a class has
+  61 // been completely loaded -- not classes in the process of being loaded --
+  62 // can read the SystemDictionary unlocked. This is safe because
+  63 //    - entries are only deleted at safepoints
+  64 //    - readers cannot come to a safepoint while actively examining
+  65 //         an entry  (an entry cannot be deleted from under a reader)
+  66 //    - entries must be fully formed before they are available to concurrent
+  67 //         readers (we must ensure write ordering)
+  68 //
+  69 // Note that placeholders are deleted at any time, as they are removed
+  70 // when a class is completely loaded. Therefore, readers as well as writers
+  71 // of placeholders must hold the SystemDictionary_lock.
+  72 //
+  73 
+  74 class Dictionary;
+  75 class PlaceholderTable;
+  76 class LoaderConstraintTable;
+  77 template &lt;MEMFLAGS F&gt; class HashtableBucket;
+  78 class ResolutionErrorTable;
+  79 class SymbolPropertyTable;
+  80 class Ticks;
+  81 
+  82 // Certain classes are preloaded, such as java.lang.Object and java.lang.String.
+  83 // They are all "well-known", in the sense that no class loader is allowed
+  84 // to provide a different definition.
+  85 //
+  86 // These klasses must all have names defined in vmSymbols.
+  87 
+  88 #define WK_KLASS_ENUM_NAME(kname)    kname##_knum
+  89 
+  90 // Each well-known class has a short klass name (like object_klass),
+  91 // a vmSymbol name (like java_lang_Object), and a flag word
+  92 // that makes some minor distinctions, like whether the klass
+  93 // is preloaded, optional, release-specific, etc.
+  94 // The order of these definitions is significant; it is the order in which
+  95 // preloading is actually performed by initialize_preloaded_classes.
+  96 
+  97 #define WK_KLASSES_DO(do_klass)                                                                                          \
+  98   /* well-known classes */                                                                                               \
+  99   do_klass(Object_klass,                                java_lang_Object,                          Pre                 ) \
+ 100   do_klass(String_klass,                                java_lang_String,                          Pre                 ) \
+ 101   do_klass(Class_klass,                                 java_lang_Class,                           Pre                 ) \
+ 102   do_klass(Cloneable_klass,                             java_lang_Cloneable,                       Pre                 ) \
+ 103   do_klass(ClassLoader_klass,                           java_lang_ClassLoader,                     Pre                 ) \
+ 104   do_klass(Serializable_klass,                          java_io_Serializable,                      Pre                 ) \
+ 105   do_klass(System_klass,                                java_lang_System,                          Pre                 ) \
+ 106   do_klass(Throwable_klass,                             java_lang_Throwable,                       Pre                 ) \
+ 107   do_klass(Error_klass,                                 java_lang_Error,                           Pre                 ) \
+ 108   do_klass(ThreadDeath_klass,                           java_lang_ThreadDeath,                     Pre                 ) \
+ 109   do_klass(Exception_klass,                             java_lang_Exception,                       Pre                 ) \
+ 110   do_klass(RuntimeException_klass,                      java_lang_RuntimeException,                Pre                 ) \
+ 111   do_klass(SecurityManager_klass,                       java_lang_SecurityManager,                 Pre                 ) \
+ 112   do_klass(ProtectionDomain_klass,                      java_security_ProtectionDomain,            Pre                 ) \
+ 113   do_klass(AccessControlContext_klass,                  java_security_AccessControlContext,        Pre                 ) \
+ 114   do_klass(ClassNotFoundException_klass,                java_lang_ClassNotFoundException,          Pre                 ) \
+ 115   do_klass(NoClassDefFoundError_klass,                  java_lang_NoClassDefFoundError,            Pre                 ) \
+ 116   do_klass(LinkageError_klass,                          java_lang_LinkageError,                    Pre                 ) \
+ 117   do_klass(ClassCastException_klass,                    java_lang_ClassCastException,              Pre                 ) \
+ 118   do_klass(ArrayStoreException_klass,                   java_lang_ArrayStoreException,             Pre                 ) \
+ 119   do_klass(VirtualMachineError_klass,                   java_lang_VirtualMachineError,             Pre                 ) \
+ 120   do_klass(OutOfMemoryError_klass,                      java_lang_OutOfMemoryError,                Pre                 ) \
+ 121   do_klass(StackOverflowError_klass,                    java_lang_StackOverflowError,              Pre                 ) \
+ 122   do_klass(IllegalMonitorStateException_klass,          java_lang_IllegalMonitorStateException,    Pre                 ) \
+ 123   do_klass(Reference_klass,                             java_lang_ref_Reference,                   Pre                 ) \
+ 124                                                                                                                          \
+ 125   /* Preload ref klasses and set reference types */                                                                      \
+ 126   do_klass(SoftReference_klass,                         java_lang_ref_SoftReference,               Pre                 ) \
+ 127   do_klass(WeakReference_klass,                         java_lang_ref_WeakReference,               Pre                 ) \
+ 128   do_klass(FinalReference_klass,                        java_lang_ref_FinalReference,              Pre                 ) \
+ 129   do_klass(PhantomReference_klass,                      java_lang_ref_PhantomReference,            Pre                 ) \
+ 130   do_klass(Finalizer_klass,                             java_lang_ref_Finalizer,                   Pre                 ) \
+ 131                                                                                                                          \
+ 132   do_klass(Thread_klass,                                java_lang_Thread,                          Pre                 ) \
+ 133   do_klass(ThreadGroup_klass,                           java_lang_ThreadGroup,                     Pre                 ) \
+ 134   do_klass(Properties_klass,                            java_util_Properties,                      Pre                 ) \
+ 135   do_klass(reflect_AccessibleObject_klass,              java_lang_reflect_AccessibleObject,        Pre                 ) \
+ 136   do_klass(reflect_Field_klass,                         java_lang_reflect_Field,                   Pre                 ) \
+ 137   do_klass(reflect_Parameter_klass,                     java_lang_reflect_Parameter,               Opt                 ) \
+ 138   do_klass(reflect_Method_klass,                        java_lang_reflect_Method,                  Pre                 ) \
+ 139   do_klass(reflect_Constructor_klass,                   java_lang_reflect_Constructor,             Pre                 ) \
+ 140                                                                                                                          \
+ 141   /* NOTE: needed too early in bootstrapping process to have checks based on JDK version */                              \
+ 142   /* Universe::is_gte_jdk14x_version() is not set up by this point. */                                                   \
+ 143   /* It's okay if this turns out to be NULL in non-1.4 JDKs. */                                                          \
+ 144   do_klass(reflect_MagicAccessorImpl_klass,             sun_reflect_MagicAccessorImpl,             Opt                 ) \
+ 145   do_klass(reflect_MethodAccessorImpl_klass,            sun_reflect_MethodAccessorImpl,            Opt_Only_JDK14NewRef) \
+ 146   do_klass(reflect_ConstructorAccessorImpl_klass,       sun_reflect_ConstructorAccessorImpl,       Opt_Only_JDK14NewRef) \
+ 147   do_klass(reflect_DelegatingClassLoader_klass,         sun_reflect_DelegatingClassLoader,         Opt                 ) \
+ 148   do_klass(reflect_ConstantPool_klass,                  sun_reflect_ConstantPool,                  Opt_Only_JDK15      ) \
+ 149   do_klass(reflect_UnsafeStaticFieldAccessorImpl_klass, sun_reflect_UnsafeStaticFieldAccessorImpl, Opt_Only_JDK15      ) \
+ 150   do_klass(reflect_CallerSensitive_klass,               sun_reflect_CallerSensitive,               Opt                 ) \
+ 151                                                                                                                          \
+ 152   /* support for dynamic typing; it's OK if these are NULL in earlier JDKs */                                            \
+ 153   do_klass(DirectMethodHandle_klass,                    java_lang_invoke_DirectMethodHandle,       Opt                 ) \
+ 154   do_klass(MethodHandle_klass,                          java_lang_invoke_MethodHandle,             Pre_JSR292          ) \
+ 155   do_klass(MemberName_klass,                            java_lang_invoke_MemberName,               Pre_JSR292          ) \
+ 156   do_klass(MethodHandleNatives_klass,                   java_lang_invoke_MethodHandleNatives,      Pre_JSR292          ) \
+ 157   do_klass(LambdaForm_klass,                            java_lang_invoke_LambdaForm,               Opt                 ) \
+ 158   do_klass(MethodType_klass,                            java_lang_invoke_MethodType,               Pre_JSR292          ) \
+ 159   do_klass(BootstrapMethodError_klass,                  java_lang_BootstrapMethodError,            Pre_JSR292          ) \
+ 160   do_klass(CallSite_klass,                              java_lang_invoke_CallSite,                 Pre_JSR292          ) \
+ 161   do_klass(ConstantCallSite_klass,                      java_lang_invoke_ConstantCallSite,         Pre_JSR292          ) \
+ 162   do_klass(MutableCallSite_klass,                       java_lang_invoke_MutableCallSite,          Pre_JSR292          ) \
+ 163   do_klass(VolatileCallSite_klass,                      java_lang_invoke_VolatileCallSite,         Pre_JSR292          ) \
+ 164   /* Note: MethodHandle must be first, and VolatileCallSite last in group */                                             \
+ 165                                                                                                                          \
+ 166   do_klass(StringBuffer_klass,                          java_lang_StringBuffer,                    Pre                 ) \
+ 167   do_klass(StringBuilder_klass,                         java_lang_StringBuilder,                   Pre                 ) \
+ 168   do_klass(misc_Unsafe_klass,                           sun_misc_Unsafe,                           Pre                 ) \
+ 169                                                                                                                          \
+ 170   /* It's NULL in non-1.4 JDKs. */                                                                                       \
+ 171   do_klass(StackTraceElement_klass,                     java_lang_StackTraceElement,               Opt                 ) \
+ 172   /* Universe::is_gte_jdk14x_version() is not set up by this point. */                                                   \
+ 173   /* It's okay if this turns out to be NULL in non-1.4 JDKs. */                                                          \
+ 174   do_klass(nio_Buffer_klass,                            java_nio_Buffer,                           Opt                 ) \
+ 175                                                                                                                          \
+ 176   /* Preload boxing klasses */                                                                                           \
+ 177   do_klass(Boolean_klass,                               java_lang_Boolean,                         Pre                 ) \
+ 178   do_klass(Character_klass,                             java_lang_Character,                       Pre                 ) \
+ 179   do_klass(Float_klass,                                 java_lang_Float,                           Pre                 ) \
+ 180   do_klass(Double_klass,                                java_lang_Double,                          Pre                 ) \
+ 181   do_klass(Byte_klass,                                  java_lang_Byte,                            Pre                 ) \
+ 182   do_klass(Short_klass,                                 java_lang_Short,                           Pre                 ) \
+ 183   do_klass(Integer_klass,                               java_lang_Integer,                         Pre                 ) \
+ 184   do_klass(Long_klass,                                  java_lang_Long,                            Pre                 ) \
+ 185   /*end*/
+ 186 
+ 187 
+ 188 class SystemDictionary : AllStatic {
+ 189   friend class VMStructs;
+ 190   friend class SystemDictionaryHandles;
+ 191 
+ 192  public:
+ 193   enum WKID {
+ 194     NO_WKID = 0,
+ 195 
+ 196     #define WK_KLASS_ENUM(name, symbol, ignore_o) WK_KLASS_ENUM_NAME(name), WK_KLASS_ENUM_NAME(symbol) = WK_KLASS_ENUM_NAME(name),
+ 197     WK_KLASSES_DO(WK_KLASS_ENUM)
+ 198     #undef WK_KLASS_ENUM
+ 199 
+ 200     WKID_LIMIT,
+ 201 
+ 202     FIRST_WKID = NO_WKID + 1
+ 203   };
+ 204 
+ 205   enum InitOption {
+ 206     Pre,                        // preloaded; error if not present
+ 207     Pre_JSR292,                 // preloaded if EnableInvokeDynamic
+ 208 
+ 209     // Order is significant.  Options before this point require resolve_or_fail.
+ 210     // Options after this point will use resolve_or_null instead.
+ 211 
+ 212     Opt,                        // preload tried; NULL if not present
+ 213     Opt_Only_JDK14NewRef,       // preload tried; use only with NewReflection
+ 214     Opt_Only_JDK15,             // preload tried; use only with JDK1.5+
+ 215     OPTION_LIMIT,
+ 216     CEIL_LG_OPTION_LIMIT = 4    // OPTION_LIMIT &lt;= (1&lt;&lt;CEIL_LG_OPTION_LIMIT)
+ 217   };
+ 218 
+ 219 
+ 220   // Returns a class with a given class name and class loader.  Loads the
+ 221   // class if needed. If not found a NoClassDefFoundError or a
+ 222   // ClassNotFoundException is thrown, depending on the value on the
+ 223   // throw_error flag.  For most uses the throw_error argument should be set
+ 224   // to true.
+ 225 
+ 226   static Klass* resolve_or_fail(Symbol* class_name, Handle class_loader, Handle protection_domain, bool throw_error, TRAPS);
+ 227   // Convenient call for null loader and protection domain.
+ 228   static Klass* resolve_or_fail(Symbol* class_name, bool throw_error, TRAPS);
+ 229 private:
+ 230   // handle error translation for resolve_or_null results
+ 231   static Klass* handle_resolution_exception(Symbol* class_name, Handle class_loader, Handle protection_domain, bool throw_error, KlassHandle klass_h, TRAPS);
+ 232 
+ 233 public:
+ 234 
+ 235   // Returns a class with a given class name and class loader.
+ 236   // Loads the class if needed. If not found NULL is returned.
+ 237   static Klass* resolve_or_null(Symbol* class_name, Handle class_loader, Handle protection_domain, TRAPS);
+ 238   // Version with null loader and protection domain
+ 239   static Klass* resolve_or_null(Symbol* class_name, TRAPS);
+ 240 
+ 241   // Resolve a superclass or superinterface. Called from ClassFileParser,
+ 242   // parse_interfaces, resolve_instance_class_or_null, load_shared_class
+ 243   // "child_name" is the class whose super class or interface is being resolved.
+ 244   static Klass* resolve_super_or_fail(Symbol* child_name,
+ 245                                         Symbol* class_name,
+ 246                                         Handle class_loader,
+ 247                                         Handle protection_domain,
+ 248                                         bool is_superclass,
+ 249                                         TRAPS);
+ 250 
+ 251   // Parse new stream. This won't update the system dictionary or
+ 252   // class hierarchy, simply parse the stream. Used by JVMTI RedefineClasses.
+ 253   static Klass* parse_stream(Symbol* class_name,
+ 254                                Handle class_loader,
+ 255                                Handle protection_domain,
+ 256                                ClassFileStream* st,
+ 257                                TRAPS) {
+ 258     KlassHandle nullHandle;
+ 259     return parse_stream(class_name, class_loader, protection_domain, st, nullHandle, NULL, THREAD);
+ 260   }
+ 261   static Klass* parse_stream(Symbol* class_name,
+ 262                                Handle class_loader,
+ 263                                Handle protection_domain,
+ 264                                ClassFileStream* st,
+ 265                                KlassHandle host_klass,
+ 266                                GrowableArray&lt;Handle&gt;* cp_patches,
+ 267                                TRAPS);
+ 268 
+ 269   // Resolve from stream (called by jni_DefineClass and JVM_DefineClass)
+ 270   static Klass* resolve_from_stream(Symbol* class_name, Handle class_loader,
+ 271                                       Handle protection_domain,
+ 272                                       ClassFileStream* st, bool verify, TRAPS);
+ 273 
+ 274   // Lookup an already loaded class. If not found NULL is returned.
+ 275   static Klass* find(Symbol* class_name, Handle class_loader, Handle protection_domain, TRAPS);
+ 276 
+ 277   // Lookup an already loaded instance or array class.
+ 278   // Do not make any queries to class loaders; consult only the cache.
+ 279   // If not found NULL is returned.
+ 280   static Klass* find_instance_or_array_klass(Symbol* class_name,
+ 281                                                Handle class_loader,
+ 282                                                Handle protection_domain,
+ 283                                                TRAPS);
+ 284 
+ 285   // Lookup an instance or array class that has already been loaded
+ 286   // either into the given class loader, or else into another class
+ 287   // loader that is constrained (via loader constraints) to produce
+ 288   // a consistent class.  Do not take protection domains into account.
+ 289   // Do not make any queries to class loaders; consult only the cache.
+ 290   // Return NULL if the class is not found.
+ 291   //
+ 292   // This function is a strict superset of find_instance_or_array_klass.
+ 293   // This function (the unchecked version) makes a conservative prediction
+ 294   // of the result of the checked version, assuming successful lookup.
+ 295   // If both functions return non-null, they must return the same value.
+ 296   // Also, the unchecked version may sometimes be non-null where the
+ 297   // checked version is null.  This can occur in several ways:
+ 298   //   1. No query has yet been made to the class loader.
+ 299   //   2. The class loader was queried, but chose not to delegate.
+ 300   //   3. ClassLoader.checkPackageAccess rejected a proposed protection domain.
+ 301   //   4. Loading was attempted, but there was a linkage error of some sort.
+ 302   // In all of these cases, the loader constraints on this type are
+ 303   // satisfied, and it is safe for classes in the given class loader
+ 304   // to manipulate strongly-typed values of the found class, subject
+ 305   // to local linkage and access checks.
+ 306   static Klass* find_constrained_instance_or_array_klass(Symbol* class_name,
+ 307                                                            Handle class_loader,
+ 308                                                            TRAPS);
+ 309 
+ 310   // Iterate over all klasses in dictionary
+ 311   //   Just the classes from defining class loaders
+ 312   static void classes_do(void f(Klass*));
+ 313   // Added for initialize_itable_for_klass to handle exceptions
+ 314   static void classes_do(void f(Klass*, TRAPS), TRAPS);
+ 315   //   All classes, and their class loaders
+ 316   static void classes_do(void f(Klass*, ClassLoaderData*));
+ 317 
+ 318   static void placeholders_do(void f(Symbol*));
+ 319 
+ 320   // Iterate over all methods in all klasses in dictionary
+ 321   static void methods_do(void f(Method*));
+ 322 
+ 323   // Garbage collection support
+ 324 
+ 325   // This method applies "blk-&gt;do_oop" to all the pointers to "system"
+ 326   // classes and loaders.
+ 327   static void always_strong_oops_do(OopClosure* blk);
+ 328   static void always_strong_classes_do(KlassClosure* closure);
+ 329 
+ 330   // Unload (that is, break root links to) all unmarked classes and
+ 331   // loaders.  Returns "true" iff something was unloaded.
+ 332   static bool do_unloading(BoolObjectClosure* is_alive);
+ 333 
+ 334   static int calculate_systemdictionary_size(int loadedclasses);
+ 335 
+ 336   // Applies "f-&gt;do_oop" to all root oops in the system dictionary.
+ 337   static void oops_do(OopClosure* f);
+ 338 
+ 339   // System loader lock
+ 340   static oop system_loader_lock()           { return _system_loader_lock_obj; }
+ 341 
+ 342 private:
+ 343   // Extended Redefine classes support (tbi)
+ 344   static void preloaded_classes_do(KlassClosure* f);
+ 345   static void lazily_loaded_classes_do(KlassClosure* f);
+ 346 public:
+ 347   // Sharing support.
+ 348   static void reorder_dictionary();
+ 349   static void copy_buckets(char** top, char* end);
+ 350   static void copy_table(char** top, char* end);
+ 351   static void reverse();
+ 352   static void set_shared_dictionary(HashtableBucket&lt;mtClass&gt;* t, int length,
+ 353                                     int number_of_entries);
+ 354   // Printing
+ 355   static void print()                   PRODUCT_RETURN;
+ 356   static void print_class_statistics()  PRODUCT_RETURN;
+ 357   static void print_method_statistics() PRODUCT_RETURN;
+ 358 
+ 359   // Number of contained klasses
+ 360   // This is both fully loaded classes and classes in the process
+ 361   // of being loaded
+ 362   static int number_of_classes();
+ 363 
+ 364   // Monotonically increasing counter which grows as classes are
+ 365   // loaded or modifications such as hot-swapping or setting/removing
+ 366   // of breakpoints are performed
+ 367   static inline int number_of_modifications()     { assert_locked_or_safepoint(Compile_lock); return _number_of_modifications; }
+ 368   // Needed by evolution and breakpoint code
+ 369   static inline void notice_modification()        { assert_locked_or_safepoint(Compile_lock); ++_number_of_modifications;      }
+ 370 
+ 371   // Verification
+ 372   static void verify();
+ 373 
+ 374 #ifdef ASSERT
+ 375   static bool is_internal_format(Symbol* class_name);
+ 376 #endif
+ 377 
+ 378   // Initialization
+ 379   static void initialize(TRAPS);
+ 380 
+ 381   // Fast access to commonly used classes (preloaded)
+ 382   static Klass* check_klass(Klass* k) {
+ 383     assert(k != NULL, "preloaded klass not initialized");
+ 384     return k;
+ 385   }
+ 386 
+ 387   static Klass* check_klass_Pre(       Klass* k) { return check_klass(k); }
+ 388   static Klass* check_klass_Pre_JSR292(Klass* k) { return EnableInvokeDynamic ? check_klass(k) : k; }
+ 389   static Klass* check_klass_Opt(       Klass* k) { return k; }
+ 390   static Klass* check_klass_Opt_Only_JDK15(Klass* k) {
+ 391     assert(JDK_Version::is_gte_jdk15x_version(), "JDK 1.5 only");
+ 392     return k;
+ 393   }
+ 394   static Klass* check_klass_Opt_Only_JDK14NewRef(Klass* k) {
+<a name="1" id="anc1"></a><span class="changed"> 395     assert(JDK_Version::is_gte_jdk14x_version() &amp;&amp; UseNewReflection, "JDK 1.4 only");</span>
+ 396     // despite the optional loading, if you use this it must be present:
+ 397     return check_klass(k);
+ 398   }
+ 399 
+ 400   static bool initialize_wk_klass(WKID id, int init_opt, TRAPS);
+ 401   static void initialize_wk_klasses_until(WKID limit_id, WKID &amp;start_id, TRAPS);
+ 402   static void initialize_wk_klasses_through(WKID end_id, WKID &amp;start_id, TRAPS) {
+ 403     int limit = (int)end_id + 1;
+ 404     initialize_wk_klasses_until((WKID) limit, start_id, THREAD);
+ 405   }
+ 406 
+ 407 public:
+ 408   #define WK_KLASS_DECLARE(name, symbol, option) \
+ 409     static Klass* name() { return check_klass_##option(_well_known_klasses[WK_KLASS_ENUM_NAME(name)]); } \
+ 410     static Klass** name##_addr() {                                                                       \
+ 411       return &amp;SystemDictionary::_well_known_klasses[SystemDictionary::WK_KLASS_ENUM_NAME(name)];           \
+ 412     }
+ 413   WK_KLASSES_DO(WK_KLASS_DECLARE);
+ 414   #undef WK_KLASS_DECLARE
+ 415 
+ 416   static Klass* well_known_klass(WKID id) {
+ 417     assert(id &gt;= (int)FIRST_WKID &amp;&amp; id &lt; (int)WKID_LIMIT, "oob");
+ 418     return _well_known_klasses[id];
+ 419   }
+ 420 
+ 421   static Klass** well_known_klass_addr(WKID id) {
+ 422     assert(id &gt;= (int)FIRST_WKID &amp;&amp; id &lt; (int)WKID_LIMIT, "oob");
+ 423     return &amp;_well_known_klasses[id];
+ 424   }
+ 425 
+ 426   // Local definition for direct access to the private array:
+ 427   #define WK_KLASS(name) _well_known_klasses[SystemDictionary::WK_KLASS_ENUM_NAME(name)]
+ 428 
+ 429   static Klass* box_klass(BasicType t) {
+ 430     assert((uint)t &lt; T_VOID+1, "range check");
+ 431     return check_klass(_box_klasses[t]);
+ 432   }
+ 433   static BasicType box_klass_type(Klass* k);  // inverse of box_klass
+ 434 
+ 435   // methods returning lazily loaded klasses
+ 436   // The corresponding method to load the class must be called before calling them.
+ 437   static Klass* abstract_ownable_synchronizer_klass() { return check_klass(_abstract_ownable_synchronizer_klass); }
+ 438 
+ 439   static void load_abstract_ownable_synchronizer_klass(TRAPS);
+ 440 
+ 441 private:
+ 442   // Tells whether ClassLoader.loadClassInternal is present
+ 443   static bool has_loadClassInternal()       { return _has_loadClassInternal; }
+ 444 
+ 445   // Returns the class loader data to be used when looking up/updating the
+ 446   // system dictionary.
+ 447   static ClassLoaderData *class_loader_data(Handle class_loader) {
+ 448     return ClassLoaderData::class_loader_data(class_loader());
+ 449   }
+ 450 
+ 451 public:
+ 452   // Tells whether ClassLoader.checkPackageAccess is present
+ 453   static bool has_checkPackageAccess()      { return _has_checkPackageAccess; }
+ 454 
+ 455   static bool Parameter_klass_loaded()      { return WK_KLASS(reflect_Parameter_klass) != NULL; }
+ 456   static bool Class_klass_loaded()          { return WK_KLASS(Class_klass) != NULL; }
+ 457   static bool Cloneable_klass_loaded()      { return WK_KLASS(Cloneable_klass) != NULL; }
+ 458   static bool Object_klass_loaded()         { return WK_KLASS(Object_klass) != NULL; }
+ 459   static bool ClassLoader_klass_loaded()    { return WK_KLASS(ClassLoader_klass) != NULL; }
+ 460 
+ 461   // Returns default system loader
+ 462   static oop java_system_loader();
+ 463 
+ 464   // Compute the default system loader
+ 465   static void compute_java_system_loader(TRAPS);
+ 466 
+ 467   // Register a new class loader
+ 468   static ClassLoaderData* register_loader(Handle class_loader, TRAPS);
+ 469 private:
+ 470   // Mirrors for primitive classes (created eagerly)
+ 471   static oop check_mirror(oop m) {
+ 472     assert(m != NULL, "mirror not initialized");
+ 473     return m;
+ 474   }
+ 475 
+ 476 public:
+ 477   // Note:  java_lang_Class::primitive_type is the inverse of java_mirror
+ 478 
+ 479   // Check class loader constraints
+ 480   static bool add_loader_constraint(Symbol* name, Handle loader1,
+ 481                                     Handle loader2, TRAPS);
+ 482   static Symbol* check_signature_loaders(Symbol* signature, Handle loader1,
+ 483                                          Handle loader2, bool is_method, TRAPS);
+ 484 
+ 485   // JSR 292
+ 486   // find a java.lang.invoke.MethodHandle.invoke* method for a given signature
+ 487   // (asks Java to compute it if necessary, except in a compiler thread)
+ 488   static methodHandle find_method_handle_invoker(Symbol* name,
+ 489                                                  Symbol* signature,
+ 490                                                  KlassHandle accessing_klass,
+ 491                                                  Handle *appendix_result,
+ 492                                                  Handle *method_type_result,
+ 493                                                  TRAPS);
+ 494   // for a given signature, find the internal MethodHandle method (linkTo* or invokeBasic)
+ 495   // (does not ask Java, since this is a low-level intrinsic defined by the JVM)
+ 496   static methodHandle find_method_handle_intrinsic(vmIntrinsics::ID iid,
+ 497                                                    Symbol* signature,
+ 498                                                    TRAPS);
+ 499   // find a java.lang.invoke.MethodType object for a given signature
+ 500   // (asks Java to compute it if necessary, except in a compiler thread)
+ 501   static Handle    find_method_handle_type(Symbol* signature,
+ 502                                            KlassHandle accessing_klass,
+ 503                                            TRAPS);
+ 504 
+ 505   // ask Java to compute a java.lang.invoke.MethodHandle object for a given CP entry
+ 506   static Handle    link_method_handle_constant(KlassHandle caller,
+ 507                                                int ref_kind, //e.g., JVM_REF_invokeVirtual
+ 508                                                KlassHandle callee,
+ 509                                                Symbol* name,
+ 510                                                Symbol* signature,
+ 511                                                TRAPS);
+ 512 
+ 513   // ask Java to create a dynamic call site, while linking an invokedynamic op
+ 514   static methodHandle find_dynamic_call_site_invoker(KlassHandle caller,
+ 515                                                      Handle bootstrap_method,
+ 516                                                      Symbol* name,
+ 517                                                      Symbol* type,
+ 518                                                      Handle *appendix_result,
+ 519                                                      Handle *method_type_result,
+ 520                                                      TRAPS);
+ 521 
+ 522   // Utility for printing loader "name" as part of tracing constraints
+ 523   static const char* loader_name(oop loader) {
+ 524     return ((loader) == NULL ? "&lt;bootloader&gt;" :
+ 525             InstanceKlass::cast((loader)-&gt;klass())-&gt;name()-&gt;as_C_string() );
+ 526   }
+ 527   static const char* loader_name(ClassLoaderData* loader_data) {
+ 528     return (loader_data-&gt;class_loader() == NULL ? "&lt;bootloader&gt;" :
+ 529             InstanceKlass::cast((loader_data-&gt;class_loader())-&gt;klass())-&gt;name()-&gt;as_C_string() );
+ 530   }
+ 531 
+ 532   // Record the error when the first attempt to resolve a reference from a constant
+ 533   // pool entry to a class fails.
+ 534   static void add_resolution_error(constantPoolHandle pool, int which, Symbol* error);
+ 535   static void delete_resolution_error(ConstantPool* pool);
+ 536   static Symbol* find_resolution_error(constantPoolHandle pool, int which);
+ 537 
+ 538  private:
+ 539 
+ 540   enum Constants {
+ 541     _loader_constraint_size = 107,                     // number of entries in constraint table
+ 542     _resolution_error_size  = 107,                     // number of entries in resolution error table
+ 543     _invoke_method_size     = 139,                     // number of entries in invoke method table
+ 544     _nof_buckets            = 1009,                    // number of buckets in hash table for placeholders
+ 545     _old_default_sdsize     = 1009,                    // backward compat for system dictionary size
+ 546     _prime_array_size       = 8,                       // array of primes for system dictionary size
+ 547     _average_depth_goal     = 3                        // goal for lookup length
+ 548   };
+ 549 
+ 550 
+ 551   // Static variables
+ 552 
+ 553   // hashtable sizes for system dictionary to allow growth
+ 554   // prime numbers for system dictionary size
+ 555   static int                     _sdgeneration;
+ 556   static const int               _primelist[_prime_array_size];
+ 557 
+ 558   // Hashtable holding loaded classes.
+ 559   static Dictionary*            _dictionary;
+ 560 
+ 561   // Hashtable holding placeholders for classes being loaded.
+ 562   static PlaceholderTable*       _placeholders;
+ 563 
+ 564   // Hashtable holding classes from the shared archive.
+ 565   static Dictionary*             _shared_dictionary;
+ 566 
+ 567   // Monotonically increasing counter which grows with
+ 568   // _number_of_classes as well as hot-swapping and breakpoint setting
+ 569   // and removal.
+ 570   static int                     _number_of_modifications;
+ 571 
+ 572   // Lock object for system class loader
+ 573   static oop                     _system_loader_lock_obj;
+ 574 
+ 575   // Constraints on class loaders
+ 576   static LoaderConstraintTable*  _loader_constraints;
+ 577 
+ 578   // Resolution errors
+ 579   static ResolutionErrorTable*   _resolution_errors;
+ 580 
+ 581   // Invoke methods (JSR 292)
+ 582   static SymbolPropertyTable*    _invoke_method_table;
+ 583 
+ 584 public:
+ 585   // for VM_CounterDecay iteration support
+ 586   friend class CounterDecay;
+ 587   static Klass* try_get_next_class();
+ 588 
+ 589 private:
+ 590   static void validate_protection_domain(instanceKlassHandle klass,
+ 591                                          Handle class_loader,
+ 592                                          Handle protection_domain, TRAPS);
+ 593 
+ 594   friend class VM_PopulateDumpSharedSpace;
+ 595   friend class TraversePlaceholdersClosure;
+ 596   static Dictionary*         dictionary() { return _dictionary; }
+ 597   static Dictionary*         shared_dictionary() { return _shared_dictionary; }
+ 598   static PlaceholderTable*   placeholders() { return _placeholders; }
+ 599   static LoaderConstraintTable* constraints() { return _loader_constraints; }
+ 600   static ResolutionErrorTable* resolution_errors() { return _resolution_errors; }
+ 601   static SymbolPropertyTable* invoke_method_table() { return _invoke_method_table; }
+ 602 
+ 603   // Basic loading operations
+ 604   static Klass* resolve_instance_class_or_null(Symbol* class_name, Handle class_loader, Handle protection_domain, TRAPS);
+ 605   static Klass* resolve_array_class_or_null(Symbol* class_name, Handle class_loader, Handle protection_domain, TRAPS);
+ 606   static instanceKlassHandle handle_parallel_super_load(Symbol* class_name, Symbol* supername, Handle class_loader, Handle protection_domain, Handle lockObject, TRAPS);
+ 607   // Wait on SystemDictionary_lock; unlocks lockObject before
+ 608   // waiting; relocks lockObject with correct recursion count
+ 609   // after waiting, but before reentering SystemDictionary_lock
+ 610   // to preserve lock order semantics.
+ 611   static void double_lock_wait(Handle lockObject, TRAPS);
+ 612   static void define_instance_class(instanceKlassHandle k, TRAPS);
+ 613   static instanceKlassHandle find_or_define_instance_class(Symbol* class_name,
+ 614                                                 Handle class_loader,
+ 615                                                 instanceKlassHandle k, TRAPS);
+ 616   static instanceKlassHandle load_shared_class(Symbol* class_name,
+ 617                                                Handle class_loader, TRAPS);
+ 618   static instanceKlassHandle load_shared_class(instanceKlassHandle ik,
+ 619                                                Handle class_loader, TRAPS);
+ 620   static instanceKlassHandle load_instance_class(Symbol* class_name, Handle class_loader, TRAPS);
+ 621   static Handle compute_loader_lock_object(Handle class_loader, TRAPS);
+ 622   static void check_loader_lock_contention(Handle loader_lock, TRAPS);
+ 623   static bool is_parallelCapable(Handle class_loader);
+ 624   static bool is_parallelDefine(Handle class_loader);
+ 625 
+ 626 public:
+ 627   static bool is_ext_class_loader(Handle class_loader);
+ 628 
+ 629 private:
+ 630   static Klass* find_shared_class(Symbol* class_name);
+ 631 
+ 632   // Setup link to hierarchy
+ 633   static void add_to_hierarchy(instanceKlassHandle k, TRAPS);
+ 634 
+ 635   // event based tracing
+ 636   static void post_class_load_event(const Ticks&amp; start_time, instanceKlassHandle k,
+ 637                                     Handle initiating_loader);
+ 638   // We pass in the hashtable index so we can calculate it outside of
+ 639   // the SystemDictionary_lock.
+ 640 
+ 641   // Basic find on loaded classes
+ 642   static Klass* find_class(int index, unsigned int hash,
+ 643                              Symbol* name, ClassLoaderData* loader_data);
+ 644   static Klass* find_class(Symbol* class_name, ClassLoaderData* loader_data);
+ 645 
+ 646   // Basic find on classes in the midst of being loaded
+ 647   static Symbol* find_placeholder(Symbol* name, ClassLoaderData* loader_data);
+ 648 
+ 649   // Updating entry in dictionary
+ 650   // Add a completely loaded class
+ 651   static void add_klass(int index, Symbol* class_name,
+ 652                         ClassLoaderData* loader_data, KlassHandle obj);
+ 653 
+ 654   // Add a placeholder for a class being loaded
+ 655   static void add_placeholder(int index,
+ 656                               Symbol* class_name,
+ 657                               ClassLoaderData* loader_data);
+ 658   static void remove_placeholder(int index,
+ 659                                  Symbol* class_name,
+ 660                                  ClassLoaderData* loader_data);
+ 661 
+ 662   // Performs cleanups after resolve_super_or_fail. This typically needs
+ 663   // to be called on failure.
+ 664   // Won't throw, but can block.
+ 665   static void resolution_cleanups(Symbol* class_name,
+ 666                                   ClassLoaderData* loader_data,
+ 667                                   TRAPS);
+ 668 
+ 669   // Initialization
+ 670   static void initialize_preloaded_classes(TRAPS);
+ 671 
+ 672   // Class loader constraints
+ 673   static void check_constraints(int index, unsigned int hash,
+ 674                                 instanceKlassHandle k, Handle loader,
+ 675                                 bool defining, TRAPS);
+ 676   static void update_dictionary(int d_index, unsigned int d_hash,
+ 677                                 int p_index, unsigned int p_hash,
+ 678                                 instanceKlassHandle k, Handle loader,
+ 679                                 TRAPS);
+ 680 
+ 681   // Variables holding commonly used klasses (preloaded)
+ 682   static Klass* _well_known_klasses[];
+ 683 
+ 684   // Lazily loaded klasses
+ 685   static Klass* volatile _abstract_ownable_synchronizer_klass;
+ 686 
+ 687   // table of box klasses (int_klass, etc.)
+ 688   static Klass* _box_klasses[T_VOID+1];
+ 689 
+ 690   static oop  _java_system_loader;
+ 691 
+ 692   static bool _has_loadClassInternal;
+ 693   static bool _has_checkPackageAccess;
+ 694 };
+ 695 
+ 696 #endif // SHARE_VM_CLASSFILE_SYSTEMDICTIONARY_HPP
+<a name="2" id="anc2"></a><b style="font-size: large; color: red">--- EOF ---</b>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</pre><form name="eof"><input name="value" value="2" type="hidden" /></form></body></html>

@@ -1,0 +1,10 @@
+--- old/src/share/vm/interpreter/linkResolver.cpp	2014-05-14 19:46:46.224960300 +0400
++++ new/src/share/vm/interpreter/linkResolver.cpp	2014-05-14 19:46:45.909849500 +0400
+@@ -951,7 +951,6 @@
+     // reflection implementation, not just those associated with
+     // sun/reflect/SerializationConstructorAccessor.
+     bool is_reflect = JDK_Version::is_gte_jdk14x_version() &&
+-                      UseNewReflection &&
+                       klass_to_check->is_subclass_of(
+                         SystemDictionary::reflect_MagicAccessorImpl_klass());
+ 

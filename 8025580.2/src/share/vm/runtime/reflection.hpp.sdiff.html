@@ -1,0 +1,185 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/runtime </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/runtime/reflection.hpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+  96                                       bool protected_restriction = false);
+  97   static bool     is_same_class_package(Klass* class1, Klass* class2);
+  98   static bool     is_same_package_member(Klass* class1, Klass* class2, TRAPS);
+  99 
+ 100   static bool can_relax_access_check_for(
+ 101     Klass* accessor, Klass* accesee, bool classloader_only);
+ 102 
+ 103   // inner class reflection
+ 104   // raise an ICCE unless the required relationship can be proven to hold
+ 105   // If inner_is_member, require the inner to be a member of the outer.
+ 106   // If !inner_is_member, require the inner to be anonymous (a non-member).
+ 107   // Caller is responsible for figuring out in advance which case must be true.
+ 108   static void check_for_inner_class(instanceKlassHandle outer, instanceKlassHandle inner,
+ 109                                     bool inner_is_member, TRAPS);
+ 110 
+ 111   //
+ 112   // Support for reflection based on dynamic bytecode generation (JDK 1.4)
+ 113   //
+ 114 
+ 115   // Create a java.lang.reflect.Method object based on a method
+<span class="changed"> 116   static oop new_method(methodHandle method, bool intern_name, bool for_constant_pool_access, TRAPS);</span>
+ 117   // Create a java.lang.reflect.Constructor object based on a method
+ 118   static oop new_constructor(methodHandle method, TRAPS);
+ 119   // Create a java.lang.reflect.Field object based on a field descriptor
+<span class="changed"> 120   static oop new_field(fieldDescriptor* fd, bool intern_name, TRAPS);</span>
+ 121   // Create a java.lang.reflect.Parameter object based on a
+ 122   // MethodParameterElement
+ 123   static oop new_parameter(Handle method, int index, Symbol* sym,
+ 124                            int flags, TRAPS);
+ 125 
+ 126 private:
+ 127   // method resolution for invoke
+ 128   static methodHandle resolve_interface_call(instanceKlassHandle klass, methodHandle method, KlassHandle recv_klass, Handle receiver, TRAPS);
+ 129   // Method call (shared by invoke_method and invoke_constructor)
+ 130   static oop  invoke(instanceKlassHandle klass, methodHandle method, Handle receiver, bool override, objArrayHandle ptypes, BasicType rtype, objArrayHandle args, bool is_method_invoke, TRAPS);
+ 131 
+ 132   // Narrowing of basic types. Used to create correct jvalues for
+ 133   // boolean, byte, char and short return return values from interpreter
+ 134   // which are returned as ints. Throws IllegalArgumentException.
+ 135   static void narrow(jvalue* value, BasicType narrow_type, TRAPS);
+ 136 
+ 137   // Conversion
+ 138   static BasicType basic_type_mirror_to_basic_type(oop basic_type_mirror, TRAPS);
+ 139 
+ 140 public:
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+  96                                       bool protected_restriction = false);
+  97   static bool     is_same_class_package(Klass* class1, Klass* class2);
+  98   static bool     is_same_package_member(Klass* class1, Klass* class2, TRAPS);
+  99 
+ 100   static bool can_relax_access_check_for(
+ 101     Klass* accessor, Klass* accesee, bool classloader_only);
+ 102 
+ 103   // inner class reflection
+ 104   // raise an ICCE unless the required relationship can be proven to hold
+ 105   // If inner_is_member, require the inner to be a member of the outer.
+ 106   // If !inner_is_member, require the inner to be anonymous (a non-member).
+ 107   // Caller is responsible for figuring out in advance which case must be true.
+ 108   static void check_for_inner_class(instanceKlassHandle outer, instanceKlassHandle inner,
+ 109                                     bool inner_is_member, TRAPS);
+ 110 
+ 111   //
+ 112   // Support for reflection based on dynamic bytecode generation (JDK 1.4)
+ 113   //
+ 114 
+ 115   // Create a java.lang.reflect.Method object based on a method
+<span class="changed"> 116   static oop new_method(methodHandle method, bool for_constant_pool_access, TRAPS);</span>
+ 117   // Create a java.lang.reflect.Constructor object based on a method
+ 118   static oop new_constructor(methodHandle method, TRAPS);
+ 119   // Create a java.lang.reflect.Field object based on a field descriptor
+<span class="changed"> 120   static oop new_field(fieldDescriptor* fd, TRAPS);</span>
+ 121   // Create a java.lang.reflect.Parameter object based on a
+ 122   // MethodParameterElement
+ 123   static oop new_parameter(Handle method, int index, Symbol* sym,
+ 124                            int flags, TRAPS);
+ 125 
+ 126 private:
+ 127   // method resolution for invoke
+ 128   static methodHandle resolve_interface_call(instanceKlassHandle klass, methodHandle method, KlassHandle recv_klass, Handle receiver, TRAPS);
+ 129   // Method call (shared by invoke_method and invoke_constructor)
+ 130   static oop  invoke(instanceKlassHandle klass, methodHandle method, Handle receiver, bool override, objArrayHandle ptypes, BasicType rtype, objArrayHandle args, bool is_method_invoke, TRAPS);
+ 131 
+ 132   // Narrowing of basic types. Used to create correct jvalues for
+ 133   // boolean, byte, char and short return return values from interpreter
+ 134   // which are returned as ints. Throws IllegalArgumentException.
+ 135   static void narrow(jvalue* value, BasicType narrow_type, TRAPS);
+ 136 
+ 137   // Conversion
+ 138   static BasicType basic_type_mirror_to_basic_type(oop basic_type_mirror, TRAPS);
+ 139 
+ 140 public:
+</pre></td>
+</tr></table>
+</body></html>

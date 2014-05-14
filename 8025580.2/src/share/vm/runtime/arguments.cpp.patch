@@ -1,0 +1,12 @@
+--- old/src/share/vm/runtime/arguments.cpp	2014-05-14 19:46:54.828999300 +0400
++++ new/src/share/vm/runtime/arguments.cpp	2014-05-14 19:46:54.512978900 +0400
+@@ -310,6 +310,9 @@
+   { "UseBoundThreads",               JDK_Version::jdk(9), JDK_Version::jdk(10) },
+   { "DefaultThreadPriority",         JDK_Version::jdk(9), JDK_Version::jdk(10) },
+   { "NoYieldsInMicrolock",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
++  { "UseNewReflection",              JDK_Version::jdk(9), JDK_Version::jdk(10) },
++  { "ReflectionWrapResolutionErrors",JDK_Version::jdk(9), JDK_Version::jdk(10) },
++  { "VerifyReflectionBytecodes",     JDK_Version::jdk(9), JDK_Version::jdk(10) },
+   { NULL, JDK_Version(0), JDK_Version(0) }
+ };
+ 

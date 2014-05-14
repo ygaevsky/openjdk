@@ -1,0 +1,371 @@
+--- old/src/share/vm/classfile/systemDictionary.cpp	2014-05-14 19:46:41.205613700 +0400
++++ new/src/share/vm/classfile/systemDictionary.cpp	2014-05-14 19:46:40.890502100 +0400
+@@ -600,7 +600,6 @@
+ 
+   Ticks class_load_start_time = Ticks::now();
+ 
+-  // UseNewReflection
+   // Fix for 4474172; see evaluation for more details
+   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
+   ClassLoaderData *loader_data = register_loader(class_loader, CHECK_NULL);
+@@ -894,7 +893,6 @@
+                               Handle protection_domain,
+                               TRAPS) {
+ 
+-  // UseNewReflection
+   // The result of this call should be consistent with the result
+   // of the call to resolve_instance_class_or_null().
+   // See evaluation 6790209 and 4474172 for more details.
+--- old/src/share/vm/classfile/systemDictionary.hpp	2014-05-14 19:46:42.931244400 +0400
++++ new/src/share/vm/classfile/systemDictionary.hpp	2014-05-14 19:46:42.621133600 +0400
+@@ -392,7 +392,7 @@
+     return k;
+   }
+   static Klass* check_klass_Opt_Only_JDK14NewRef(Klass* k) {
+-    assert(JDK_Version::is_gte_jdk14x_version() && UseNewReflection, "JDK 1.4 only");
++    assert(JDK_Version::is_gte_jdk14x_version(), "JDK 1.4 only");
+     // despite the optional loading, if you use this it must be present:
+     return check_klass(k);
+   }
+--- old/src/share/vm/classfile/verifier.cpp	2014-05-14 19:46:44.592661400 +0400
++++ new/src/share/vm/classfile/verifier.cpp	2014-05-14 19:46:44.206530200 +0400
+@@ -211,9 +211,9 @@
+     // reflection implementation, not just those associated with
+     // sun/reflect/SerializationConstructorAccessor.
+     // NOTE: this is called too early in the bootstrapping process to be
+-    // guarded by Universe::is_gte_jdk14x_version()/UseNewReflection.
++    // guarded by Universe::is_gte_jdk14x_version().
+     // Also for lambda generated code, gte jdk8
+-    (!is_reflect || VerifyReflectionBytecodes));
++    (!is_reflect));
+ }
+ 
+ Symbol* Verifier::inference_verify(
+--- old/src/share/vm/interpreter/linkResolver.cpp	2014-05-14 19:46:46.224960300 +0400
++++ new/src/share/vm/interpreter/linkResolver.cpp	2014-05-14 19:46:45.909849500 +0400
+@@ -951,7 +951,6 @@
+     // reflection implementation, not just those associated with
+     // sun/reflect/SerializationConstructorAccessor.
+     bool is_reflect = JDK_Version::is_gte_jdk14x_version() &&
+-                      UseNewReflection &&
+                       klass_to_check->is_subclass_of(
+                         SystemDictionary::reflect_MagicAccessorImpl_klass());
+ 
+--- old/src/share/vm/oops/method.cpp	2014-05-14 19:46:47.797062900 +0400
++++ new/src/share/vm/oops/method.cpp	2014-05-14 19:46:47.486052800 +0400
+@@ -1017,13 +1017,11 @@
+  *  security related stack walks (like Reflection.getCallerClass).
+  */
+ bool Method::is_ignored_by_security_stack_walk() const {
+-  const bool use_new_reflection = JDK_Version::is_gte_jdk14x_version() && UseNewReflection;
+-
+   if (intrinsic_id() == vmIntrinsics::_invoke) {
+     // This is Method.invoke() -- ignore it
+     return true;
+   }
+-  if (use_new_reflection &&
++  if (JDK_Version::is_gte_jdk14x_version() &&
+       method_holder()->is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass())) {
+     // This is an auxilary frame -- ignore it
+     return true;
+--- old/src/share/vm/opto/library_call.cpp	2014-05-14 19:46:49.394328000 +0400
++++ new/src/share/vm/opto/library_call.cpp	2014-05-14 19:46:49.079214600 +0400
+@@ -420,7 +420,6 @@
+     return NULL;
+ 
+   case vmIntrinsics::_getCallerClass:
+-    if (!UseNewReflection)  return NULL;
+     if (!InlineReflectionGetCallerClass)  return NULL;
+     if (SystemDictionary::reflect_CallerSensitive_klass() == NULL)  return NULL;
+     break;
+--- old/src/share/vm/prims/jni.cpp	2014-05-14 19:46:51.263677900 +0400
++++ new/src/share/vm/prims/jni.cpp	2014-05-14 19:46:50.945659800 +0400
+@@ -543,7 +543,7 @@
+   if (m->is_initializer()) {
+     reflection_method = Reflection::new_constructor(m, CHECK_NULL);
+   } else {
+-    reflection_method = Reflection::new_method(m, UseNewReflection, false, CHECK_NULL);
++    reflection_method = Reflection::new_method(m, false, CHECK_NULL);
+   }
+   ret = JNIHandles::make_local(env, reflection_method);
+   return ret;
+@@ -2271,7 +2271,7 @@
+     found = InstanceKlass::cast(k)->find_field_from_offset(offset, false, &fd);
+   }
+   assert(found, "bad fieldID passed into jni_ToReflectedField");
+-  oop reflected = Reflection::new_field(&fd, UseNewReflection, CHECK_NULL);
++  oop reflected = Reflection::new_field(&fd, CHECK_NULL);
+   ret = JNIHandles::make_local(env, reflected);
+   return ret;
+ JNI_END
+--- old/src/share/vm/prims/jvm.cpp	2014-05-14 19:46:52.984575200 +0400
++++ new/src/share/vm/prims/jvm.cpp	2014-05-14 19:46:52.678162800 +0400
+@@ -1836,7 +1836,7 @@
+ 
+     if (!publicOnly || fs.access_flags().is_public()) {
+       fd.reinitialize(k(), fs.index());
+-      oop field = Reflection::new_field(&fd, UseNewReflection, CHECK_NULL);
++      oop field = Reflection::new_field(&fd, CHECK_NULL);
+       result->obj_at_put(out_idx, field);
+       ++out_idx;
+     }
+@@ -1914,7 +1914,7 @@
+       if (want_constructor) {
+         m = Reflection::new_constructor(method, CHECK_NULL);
+       } else {
+-        m = Reflection::new_method(method, UseNewReflection, false, CHECK_NULL);
++        m = Reflection::new_method(method, false, CHECK_NULL);
+       }
+       result->obj_at_put(i, m);
+     }
+@@ -2037,7 +2037,7 @@
+   }
+   oop method;
+   if (!m->is_initializer() || m->is_static()) {
+-    method = Reflection::new_method(m, true, true, CHECK_NULL);
++    method = Reflection::new_method(m, true, CHECK_NULL);
+   } else {
+     method = Reflection::new_constructor(m, CHECK_NULL);
+   }
+@@ -2087,7 +2087,7 @@
+   if (target_klass == NULL) {
+     THROW_MSG_0(vmSymbols::java_lang_RuntimeException(), "Unable to look up field in target class");
+   }
+-  oop field = Reflection::new_field(&fd, true, CHECK_NULL);
++  oop field = Reflection::new_field(&fd, CHECK_NULL);
+   return JNIHandles::make_local(field);
+ }
+ 
+@@ -3502,7 +3502,6 @@
+ 
+ JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
+   for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
+-    // UseNewReflection
+     vfst.skip_reflection_related_frames(); // Only needed for 1.4 reflection
+     oop loader = vfst.method()->method_holder()->class_loader();
+     if (loader != NULL) {
+--- old/src/share/vm/runtime/arguments.cpp	2014-05-14 19:46:54.828999300 +0400
++++ new/src/share/vm/runtime/arguments.cpp	2014-05-14 19:46:54.512978900 +0400
+@@ -310,6 +310,9 @@
+   { "UseBoundThreads",               JDK_Version::jdk(9), JDK_Version::jdk(10) },
+   { "DefaultThreadPriority",         JDK_Version::jdk(9), JDK_Version::jdk(10) },
+   { "NoYieldsInMicrolock",           JDK_Version::jdk(9), JDK_Version::jdk(10) },
++  { "UseNewReflection",              JDK_Version::jdk(9), JDK_Version::jdk(10) },
++  { "ReflectionWrapResolutionErrors",JDK_Version::jdk(9), JDK_Version::jdk(10) },
++  { "VerifyReflectionBytecodes",     JDK_Version::jdk(9), JDK_Version::jdk(10) },
+   { NULL, JDK_Version(0), JDK_Version(0) }
+ };
+ 
+--- old/src/share/vm/runtime/globals.hpp	2014-05-14 19:46:56.674353200 +0400
++++ new/src/share/vm/runtime/globals.hpp	2014-05-14 19:46:56.358544700 +0400
+@@ -3654,22 +3654,6 @@
+                                                                             \
+   /* New JDK 1.4 reflection implementation */                               \
+                                                                             \
+-  develop(bool, UseNewReflection, true,                                     \
+-          "Temporary flag for transition to reflection based on dynamic "   \
+-          "bytecode generation in 1.4; can no longer be turned off in 1.4 " \
+-          "JDK, and is unneeded in 1.3 JDK, but marks most places VM "      \
+-          "changes were needed")                                            \
+-                                                                            \
+-  develop(bool, VerifyReflectionBytecodes, false,                           \
+-          "Force verification of 1.4 reflection bytecodes. Does not work "  \
+-          "in situations like that described in 4486457 or for "            \
+-          "constructors generated for serialization, so can not be enabled "\
+-          "in product.")                                                    \
+-                                                                            \
+-  product(bool, ReflectionWrapResolutionErrors, true,                       \
+-          "Temporary flag for transition to AbstractMethodError wrapped "   \
+-          "in InvocationTargetException. See 6531596")                      \
+-                                                                            \
+   develop(intx, FastSuperclassLimit, 8,                                     \
+           "Depth of hardwired instanceof accelerator array")                \
+                                                                             \
+--- old/src/share/vm/runtime/reflection.cpp	2014-05-14 19:46:58.408444200 +0400
++++ new/src/share/vm/runtime/reflection.cpp	2014-05-14 19:46:58.100813200 +0400
+@@ -466,7 +466,6 @@
+   // New (1.4) reflection implementation. Allow all accesses from
+   // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
+   if (   JDK_Version::is_gte_jdk14x_version()
+-      && UseNewReflection
+       && current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+     return true;
+   }
+@@ -571,7 +570,6 @@
+   // New (1.4) reflection implementation. Allow all accesses from
+   // sun/reflect/MagicAccessorImpl subclasses to succeed trivially.
+   if (   JDK_Version::is_gte_jdk14x_version()
+-      && UseNewReflection
+       && current_class->is_subclass_of(SystemDictionary::reflect_MagicAccessorImpl_klass())) {
+     return true;
+   }
+@@ -708,7 +706,7 @@
+ }
+ 
+ 
+-oop Reflection::new_method(methodHandle method, bool intern_name, bool for_constant_pool_access, TRAPS) {
++oop Reflection::new_method(methodHandle method, bool for_constant_pool_access, TRAPS) {
+   // In jdk1.2.x, getMethods on an interface erroneously includes <clinit>, thus the complicated assert.
+   // Also allow sun.reflect.ConstantPool to refer to <clinit> methods as java.lang.reflect.Methods.
+   assert(!method()->is_initializer() ||
+@@ -731,14 +729,8 @@
+   if (exception_types.is_null()) return NULL;
+ 
+   Symbol*  method_name = method->name();
+-  Handle name;
+-  if (intern_name) {
+-    // intern_name is only true with UseNewReflection
+-    oop name_oop = StringTable::intern(method_name, CHECK_NULL);
+-    name = Handle(THREAD, name_oop);
+-  } else {
+-    name = java_lang_String::create_from_symbol(method_name, CHECK_NULL);
+-  }
++  oop name_oop = StringTable::intern(method_name, CHECK_NULL);
++  Handle name = Handle(THREAD, name_oop);
+   if (name == NULL) return NULL;
+ 
+   int modifiers = method->access_flags().as_int() & JVM_RECOGNIZED_METHOD_MODIFIERS;
+@@ -825,16 +817,10 @@
+ }
+ 
+ 
+-oop Reflection::new_field(fieldDescriptor* fd, bool intern_name, TRAPS) {
++oop Reflection::new_field(fieldDescriptor* fd, TRAPS) {
+   Symbol*  field_name = fd->name();
+-  Handle name;
+-  if (intern_name) {
+-    // intern_name is only true with UseNewReflection
+-    oop name_oop = StringTable::intern(field_name, CHECK_NULL);
+-    name = Handle(THREAD, name_oop);
+-  } else {
+-    name = java_lang_String::create_from_symbol(field_name, CHECK_NULL);
+-  }
++  oop name_oop = StringTable::intern(field_name, CHECK_NULL);
++  Handle name = Handle(THREAD, name_oop);
+   Symbol*  signature  = fd->signature();
+   instanceKlassHandle  holder    (THREAD, fd->field_holder());
+   Handle type = new_type(signature, holder, CHECK_NULL);
+@@ -933,27 +919,23 @@
+       // resolve based on the receiver
+       if (reflected_method->method_holder()->is_interface()) {
+         // resolve interface call
+-        if (ReflectionWrapResolutionErrors) {
+-          // new default: 6531596
+-          // Match resolution errors with those thrown due to reflection inlining
+-          // Linktime resolution & IllegalAccessCheck already done by Class.getMethod()
+-          method = resolve_interface_call(klass, reflected_method, target_klass, receiver, THREAD);
+-          if (HAS_PENDING_EXCEPTION) {
+-          // Method resolution threw an exception; wrap it in an InvocationTargetException
+-            oop resolution_exception = PENDING_EXCEPTION;
+-            CLEAR_PENDING_EXCEPTION;
+-            // JVMTI has already reported the pending exception
+-            // JVMTI internal flag reset is needed in order to report InvocationTargetException
+-            if (THREAD->is_Java_thread()) {
+-              JvmtiExport::clear_detected_exception((JavaThread*) THREAD);
+-            }
+-            JavaCallArguments args(Handle(THREAD, resolution_exception));
+-            THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
+-                vmSymbols::throwable_void_signature(),
+-                &args);
++        //
++        // Match resolution errors with those thrown due to reflection inlining
++        // Linktime resolution & IllegalAccessCheck already done by Class.getMethod()
++        method = resolve_interface_call(klass, reflected_method, target_klass, receiver, THREAD);
++        if (HAS_PENDING_EXCEPTION) {
++        // Method resolution threw an exception; wrap it in an InvocationTargetException
++          oop resolution_exception = PENDING_EXCEPTION;
++          CLEAR_PENDING_EXCEPTION;
++          // JVMTI has already reported the pending exception
++          // JVMTI internal flag reset is needed in order to report InvocationTargetException
++          if (THREAD->is_Java_thread()) {
++            JvmtiExport::clear_detected_exception((JavaThread*) THREAD);
+           }
+-        } else {
+-          method = resolve_interface_call(klass, reflected_method, target_klass, receiver, CHECK_(NULL));
++          JavaCallArguments args(Handle(THREAD, resolution_exception));
++          THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
++              vmSymbols::throwable_void_signature(),
++              &args);
+         }
+       }  else {
+         // if the method can be overridden, we resolve using the vtable index.
+@@ -970,24 +952,16 @@
+           // Check for abstract methods as well
+           if (method->is_abstract()) {
+             // new default: 6531596
+-            if (ReflectionWrapResolutionErrors) {
+-              ResourceMark rm(THREAD);
+-              Handle h_origexception = Exceptions::new_exception(THREAD,
+-                     vmSymbols::java_lang_AbstractMethodError(),
+-                     Method::name_and_sig_as_C_string(target_klass(),
+-                     method->name(),
+-                     method->signature()));
+-              JavaCallArguments args(h_origexception);
+-              THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
+-                vmSymbols::throwable_void_signature(),
+-                &args);
+-            } else {
+-              ResourceMark rm(THREAD);
+-              THROW_MSG_0(vmSymbols::java_lang_AbstractMethodError(),
+-                        Method::name_and_sig_as_C_string(target_klass(),
+-                                                                method->name(),
+-                                                                method->signature()));
+-            }
++            ResourceMark rm(THREAD);
++            Handle h_origexception = Exceptions::new_exception(THREAD,
++                   vmSymbols::java_lang_AbstractMethodError(),
++                   Method::name_and_sig_as_C_string(target_klass(),
++                   method->name(),
++                   method->signature()));
++            JavaCallArguments args(h_origexception);
++            THROW_ARG_0(vmSymbols::java_lang_reflect_InvocationTargetException(),
++              vmSymbols::throwable_void_signature(),
++              &args);
+           }
+         }
+       }
+@@ -1006,7 +980,7 @@
+ 
+   // In the JDK 1.4 reflection implementation, the security check is
+   // done at the Java level
+-  if (!(JDK_Version::is_gte_jdk14x_version() && UseNewReflection)) {
++  if (!JDK_Version::is_gte_jdk14x_version()) {
+ 
+   // Access checking (unless overridden by Method)
+   if (!override) {
+@@ -1018,7 +992,7 @@
+     }
+   }
+ 
+-  } // !(Universe::is_gte_jdk14x_version() && UseNewReflection)
++  } // !Universe::is_gte_jdk14x_version()
+ 
+   assert(ptypes->is_objArray(), "just checking");
+   int args_len = args.is_null() ? 0 : args->length();
+--- old/src/share/vm/runtime/reflection.hpp	2014-05-14 19:47:00.175340700 +0400
++++ new/src/share/vm/runtime/reflection.hpp	2014-05-14 19:46:59.748720100 +0400
+@@ -113,11 +113,11 @@
+   //
+ 
+   // Create a java.lang.reflect.Method object based on a method
+-  static oop new_method(methodHandle method, bool intern_name, bool for_constant_pool_access, TRAPS);
++  static oop new_method(methodHandle method, bool for_constant_pool_access, TRAPS);
+   // Create a java.lang.reflect.Constructor object based on a method
+   static oop new_constructor(methodHandle method, TRAPS);
+   // Create a java.lang.reflect.Field object based on a field descriptor
+-  static oop new_field(fieldDescriptor* fd, bool intern_name, TRAPS);
++  static oop new_field(fieldDescriptor* fd, TRAPS);
+   // Create a java.lang.reflect.Parameter object based on a
+   // MethodParameterElement
+   static oop new_parameter(Handle method, int index, Symbol* sym,
+--- old/src/share/vm/runtime/vframe.cpp	2014-05-14 19:47:01.700223700 +0400
++++ new/src/share/vm/runtime/vframe.cpp	2014-05-14 19:47:01.390747300 +0400
+@@ -471,7 +471,7 @@
+ 
+ void vframeStreamCommon::skip_reflection_related_frames() {
+   while (!at_end() &&
+-         (JDK_Version::is_gte_jdk14x_version() && UseNewReflection &&
++         (JDK_Version::is_gte_jdk14x_version() &&
+           (method()->method_holder()->is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass()) ||
+            method()->method_holder()->is_subclass_of(SystemDictionary::reflect_ConstructorAccessorImpl_klass())))) {
+     next();

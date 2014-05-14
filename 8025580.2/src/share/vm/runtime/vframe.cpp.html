@@ -1,0 +1,725 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>New src/share/vm/runtime/vframe.cpp</title>
+<body id="SUNWwebrev">
+<pre>
+   1 /*
+   2  * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+   3  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+   4  *
+   5  * This code is free software; you can redistribute it and/or modify it
+   6  * under the terms of the GNU General Public License version 2 only, as
+   7  * published by the Free Software Foundation.
+   8  *
+   9  * This code is distributed in the hope that it will be useful, but WITHOUT
+  10  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  11  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+  12  * version 2 for more details (a copy is included in the LICENSE file that
+  13  * accompanied this code).
+  14  *
+  15  * You should have received a copy of the GNU General Public License version
+  16  * 2 along with this work; if not, write to the Free Software Foundation,
+  17  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+  18  *
+  19  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+  20  * or visit www.oracle.com if you need additional information or have any
+  21  * questions.
+  22  *
+  23  */
+  24 
+  25 #include "precompiled.hpp"
+  26 #include "classfile/javaClasses.hpp"
+  27 #include "classfile/systemDictionary.hpp"
+  28 #include "classfile/vmSymbols.hpp"
+  29 #include "code/codeCache.hpp"
+  30 #include "code/debugInfoRec.hpp"
+  31 #include "code/nmethod.hpp"
+  32 #include "code/pcDesc.hpp"
+  33 #include "code/scopeDesc.hpp"
+  34 #include "interpreter/interpreter.hpp"
+  35 #include "interpreter/oopMapCache.hpp"
+  36 #include "memory/resourceArea.hpp"
+  37 #include "oops/instanceKlass.hpp"
+  38 #include "oops/oop.inline.hpp"
+  39 #include "runtime/handles.inline.hpp"
+  40 #include "runtime/objectMonitor.hpp"
+  41 #include "runtime/objectMonitor.inline.hpp"
+  42 #include "runtime/signature.hpp"
+  43 #include "runtime/stubRoutines.hpp"
+  44 #include "runtime/synchronizer.hpp"
+  45 #include "runtime/vframe.hpp"
+  46 #include "runtime/vframeArray.hpp"
+  47 #include "runtime/vframe_hp.hpp"
+  48 
+  49 vframe::vframe(const frame* fr, const RegisterMap* reg_map, JavaThread* thread)
+  50 : _reg_map(reg_map), _thread(thread) {
+  51   assert(fr != NULL, "must have frame");
+  52   _fr = *fr;
+  53 }
+  54 
+  55 vframe::vframe(const frame* fr, JavaThread* thread)
+  56 : _reg_map(thread), _thread(thread) {
+  57   assert(fr != NULL, "must have frame");
+  58   _fr = *fr;
+  59 }
+  60 
+  61 vframe* vframe::new_vframe(const frame* f, const RegisterMap* reg_map, JavaThread* thread) {
+  62   // Interpreter frame
+  63   if (f-&gt;is_interpreted_frame()) {
+  64     return new interpretedVFrame(f, reg_map, thread);
+  65   }
+  66 
+  67   // Compiled frame
+  68   CodeBlob* cb = f-&gt;cb();
+  69   if (cb != NULL) {
+  70     if (cb-&gt;is_nmethod()) {
+  71       nmethod* nm = (nmethod*)cb;
+  72       return new compiledVFrame(f, reg_map, thread, nm);
+  73     }
+  74 
+  75     if (f-&gt;is_runtime_frame()) {
+  76       // Skip this frame and try again.
+  77       RegisterMap temp_map = *reg_map;
+  78       frame s = f-&gt;sender(&amp;temp_map);
+  79       return new_vframe(&amp;s, &amp;temp_map, thread);
+  80     }
+  81   }
+  82 
+  83   // External frame
+  84   return new externalVFrame(f, reg_map, thread);
+  85 }
+  86 
+  87 vframe* vframe::sender() const {
+  88   RegisterMap temp_map = *register_map();
+  89   assert(is_top(), "just checking");
+  90   if (_fr.is_entry_frame() &amp;&amp; _fr.is_first_frame()) return NULL;
+  91   frame s = _fr.real_sender(&amp;temp_map);
+  92   if (s.is_first_frame()) return NULL;
+  93   return vframe::new_vframe(&amp;s, &amp;temp_map, thread());
+  94 }
+  95 
+  96 vframe* vframe::top() const {
+  97   vframe* vf = (vframe*) this;
+  98   while (!vf-&gt;is_top()) vf = vf-&gt;sender();
+  99   return vf;
+ 100 }
+ 101 
+ 102 
+ 103 javaVFrame* vframe::java_sender() const {
+ 104   vframe* f = sender();
+ 105   while (f != NULL) {
+ 106     if (f-&gt;is_java_frame()) return javaVFrame::cast(f);
+ 107     f = f-&gt;sender();
+ 108   }
+ 109   return NULL;
+ 110 }
+ 111 
+ 112 // ------------- javaVFrame --------------
+ 113 
+ 114 GrowableArray&lt;MonitorInfo*&gt;* javaVFrame::locked_monitors() {
+ 115   assert(SafepointSynchronize::is_at_safepoint() || JavaThread::current() == thread(),
+ 116          "must be at safepoint or it's a java frame of the current thread");
+ 117 
+ 118   GrowableArray&lt;MonitorInfo*&gt;* mons = monitors();
+ 119   GrowableArray&lt;MonitorInfo*&gt;* result = new GrowableArray&lt;MonitorInfo*&gt;(mons-&gt;length());
+ 120   if (mons-&gt;is_empty()) return result;
+ 121 
+ 122   bool found_first_monitor = false;
+ 123   ObjectMonitor *pending_monitor = thread()-&gt;current_pending_monitor();
+ 124   ObjectMonitor *waiting_monitor = thread()-&gt;current_waiting_monitor();
+ 125   oop pending_obj = (pending_monitor != NULL ? (oop) pending_monitor-&gt;object() : (oop) NULL);
+ 126   oop waiting_obj = (waiting_monitor != NULL ? (oop) waiting_monitor-&gt;object() : (oop) NULL);
+ 127 
+ 128   for (int index = (mons-&gt;length()-1); index &gt;= 0; index--) {
+ 129     MonitorInfo* monitor = mons-&gt;at(index);
+ 130     if (monitor-&gt;eliminated() &amp;&amp; is_compiled_frame()) continue; // skip eliminated monitor
+ 131     oop obj = monitor-&gt;owner();
+ 132     if (obj == NULL) continue; // skip unowned monitor
+ 133     //
+ 134     // Skip the monitor that the thread is blocked to enter or waiting on
+ 135     //
+ 136     if (!found_first_monitor &amp;&amp; (obj == pending_obj || obj == waiting_obj)) {
+ 137       continue;
+ 138     }
+ 139     found_first_monitor = true;
+ 140     result-&gt;append(monitor);
+ 141   }
+ 142   return result;
+ 143 }
+ 144 
+ 145 static void print_locked_object_class_name(outputStream* st, Handle obj, const char* lock_state) {
+ 146   if (obj.not_null()) {
+ 147     st-&gt;print("\t- %s &lt;" INTPTR_FORMAT "&gt; ", lock_state, (address)obj());
+ 148     if (obj-&gt;klass() == SystemDictionary::Class_klass()) {
+ 149       Klass* target_klass = java_lang_Class::as_Klass(obj());
+ 150       st-&gt;print_cr("(a java.lang.Class for %s)", InstanceKlass::cast(target_klass)-&gt;external_name());
+ 151     } else {
+ 152       Klass* k = obj-&gt;klass();
+ 153       st-&gt;print_cr("(a %s)", k-&gt;external_name());
+ 154     }
+ 155   }
+ 156 }
+ 157 
+ 158 void javaVFrame::print_lock_info_on(outputStream* st, int frame_count) {
+ 159   ResourceMark rm;
+ 160 
+ 161   // If this is the first frame, and java.lang.Object.wait(...) then print out the receiver.
+ 162   if (frame_count == 0) {
+ 163     if (method()-&gt;name() == vmSymbols::wait_name() &amp;&amp;
+ 164         method()-&gt;method_holder()-&gt;name() == vmSymbols::java_lang_Object()) {
+ 165       StackValueCollection* locs = locals();
+ 166       if (!locs-&gt;is_empty()) {
+ 167         StackValue* sv = locs-&gt;at(0);
+ 168         if (sv-&gt;type() == T_OBJECT) {
+ 169           Handle o = locs-&gt;at(0)-&gt;get_obj();
+ 170           print_locked_object_class_name(st, o, "waiting on");
+ 171         }
+ 172       }
+ 173     } else if (thread()-&gt;current_park_blocker() != NULL) {
+ 174       oop obj = thread()-&gt;current_park_blocker();
+ 175       Klass* k = obj-&gt;klass();
+ 176       st-&gt;print_cr("\t- %s &lt;" INTPTR_FORMAT "&gt; (a %s)", "parking to wait for ", (address)obj, k-&gt;external_name());
+ 177     }
+ 178   }
+ 179 
+ 180 
+ 181   // Print out all monitors that we have locked or are trying to lock
+ 182   GrowableArray&lt;MonitorInfo*&gt;* mons = monitors();
+ 183   if (!mons-&gt;is_empty()) {
+ 184     bool found_first_monitor = false;
+ 185     for (int index = (mons-&gt;length()-1); index &gt;= 0; index--) {
+ 186       MonitorInfo* monitor = mons-&gt;at(index);
+ 187       if (monitor-&gt;eliminated() &amp;&amp; is_compiled_frame()) { // Eliminated in compiled code
+ 188         if (monitor-&gt;owner_is_scalar_replaced()) {
+ 189           Klass* k = java_lang_Class::as_Klass(monitor-&gt;owner_klass());
+ 190           st-&gt;print("\t- eliminated &lt;owner is scalar replaced&gt; (a %s)", k-&gt;external_name());
+ 191         } else {
+ 192           oop obj = monitor-&gt;owner();
+ 193           if (obj != NULL) {
+ 194             print_locked_object_class_name(st, obj, "eliminated");
+ 195           }
+ 196         }
+ 197         continue;
+ 198       }
+ 199       if (monitor-&gt;owner() != NULL) {
+ 200 
+ 201         // First, assume we have the monitor locked. If we haven't found an
+ 202         // owned monitor before and this is the first frame, then we need to
+ 203         // see if we have completed the lock or we are blocked trying to
+ 204         // acquire it - we can only be blocked if the monitor is inflated
+ 205 
+ 206         const char *lock_state = "locked"; // assume we have the monitor locked
+ 207         if (!found_first_monitor &amp;&amp; frame_count == 0) {
+ 208           markOop mark = monitor-&gt;owner()-&gt;mark();
+ 209           if (mark-&gt;has_monitor() &amp;&amp;
+ 210               mark-&gt;monitor() == thread()-&gt;current_pending_monitor()) {
+ 211             lock_state = "waiting to lock";
+ 212           }
+ 213         }
+ 214 
+ 215         found_first_monitor = true;
+ 216         print_locked_object_class_name(st, monitor-&gt;owner(), lock_state);
+ 217       }
+ 218     }
+ 219   }
+ 220 }
+ 221 
+ 222 // ------------- interpretedVFrame --------------
+ 223 
+ 224 u_char* interpretedVFrame::bcp() const {
+ 225   return fr().interpreter_frame_bcp();
+ 226 }
+ 227 
+ 228 void interpretedVFrame::set_bcp(u_char* bcp) {
+ 229   fr().interpreter_frame_set_bcp(bcp);
+ 230 }
+ 231 
+ 232 intptr_t* interpretedVFrame::locals_addr_at(int offset) const {
+ 233   assert(fr().is_interpreted_frame(), "frame should be an interpreted frame");
+ 234   return fr().interpreter_frame_local_at(offset);
+ 235 }
+ 236 
+ 237 
+ 238 GrowableArray&lt;MonitorInfo*&gt;* interpretedVFrame::monitors() const {
+ 239   GrowableArray&lt;MonitorInfo*&gt;* result = new GrowableArray&lt;MonitorInfo*&gt;(5);
+ 240   for (BasicObjectLock* current = (fr().previous_monitor_in_interpreter_frame(fr().interpreter_frame_monitor_begin()));
+ 241        current &gt;= fr().interpreter_frame_monitor_end();
+ 242        current = fr().previous_monitor_in_interpreter_frame(current)) {
+ 243     result-&gt;push(new MonitorInfo(current-&gt;obj(), current-&gt;lock(), false, false));
+ 244   }
+ 245   return result;
+ 246 }
+ 247 
+ 248 int interpretedVFrame::bci() const {
+ 249   return method()-&gt;bci_from(bcp());
+ 250 }
+ 251 
+ 252 Method* interpretedVFrame::method() const {
+ 253   return fr().interpreter_frame_method();
+ 254 }
+ 255 
+ 256 StackValueCollection* interpretedVFrame::locals() const {
+ 257   int length = method()-&gt;max_locals();
+ 258 
+ 259   if (method()-&gt;is_native()) {
+ 260     // If the method is native, max_locals is not telling the truth.
+ 261     // maxlocals then equals the size of parameters
+ 262     length = method()-&gt;size_of_parameters();
+ 263   }
+ 264 
+ 265   StackValueCollection* result = new StackValueCollection(length);
+ 266 
+ 267   // Get oopmap describing oops and int for current bci
+ 268   InterpreterOopMap oop_mask;
+ 269   if (TraceDeoptimization &amp;&amp; Verbose) {
+ 270     methodHandle m_h(thread(), method());
+ 271     OopMapCache::compute_one_oop_map(m_h, bci(), &amp;oop_mask);
+ 272   } else {
+ 273     method()-&gt;mask_for(bci(), &amp;oop_mask);
+ 274   }
+ 275   // handle locals
+ 276   for(int i=0; i &lt; length; i++) {
+ 277     // Find stack location
+ 278     intptr_t *addr = locals_addr_at(i);
+ 279 
+ 280     // Depending on oop/int put it in the right package
+ 281     StackValue *sv;
+ 282     if (oop_mask.is_oop(i)) {
+ 283       // oop value
+ 284       Handle h(*(oop *)addr);
+ 285       sv = new StackValue(h);
+ 286     } else {
+ 287       // integer
+ 288       sv = new StackValue(*addr);
+ 289     }
+ 290     assert(sv != NULL, "sanity check");
+ 291     result-&gt;add(sv);
+ 292   }
+ 293   return result;
+ 294 }
+ 295 
+ 296 void interpretedVFrame::set_locals(StackValueCollection* values) const {
+ 297   if (values == NULL || values-&gt;size() == 0) return;
+ 298 
+ 299   int length = method()-&gt;max_locals();
+ 300   if (method()-&gt;is_native()) {
+ 301     // If the method is native, max_locals is not telling the truth.
+ 302     // maxlocals then equals the size of parameters
+ 303     length = method()-&gt;size_of_parameters();
+ 304   }
+ 305 
+ 306   assert(length == values-&gt;size(), "Mismatch between actual stack format and supplied data");
+ 307 
+ 308   // handle locals
+ 309   for (int i = 0; i &lt; length; i++) {
+ 310     // Find stack location
+ 311     intptr_t *addr = locals_addr_at(i);
+ 312 
+ 313     // Depending on oop/int put it in the right package
+ 314     StackValue *sv = values-&gt;at(i);
+ 315     assert(sv != NULL, "sanity check");
+ 316     if (sv-&gt;type() == T_OBJECT) {
+ 317       *(oop *) addr = (sv-&gt;get_obj())();
+ 318     } else {                   // integer
+ 319       *addr = sv-&gt;get_int();
+ 320     }
+ 321   }
+ 322 }
+ 323 
+ 324 StackValueCollection* interpretedVFrame::expressions() const {
+ 325 
+ 326   InterpreterOopMap oop_mask;
+ 327 
+ 328   if (!method()-&gt;is_native()) {
+ 329     // Get oopmap describing oops and int for current bci
+ 330     if (TraceDeoptimization &amp;&amp; Verbose) {
+ 331       methodHandle m_h(method());
+ 332       OopMapCache::compute_one_oop_map(m_h, bci(), &amp;oop_mask);
+ 333     } else {
+ 334       method()-&gt;mask_for(bci(), &amp;oop_mask);
+ 335     }
+ 336   }
+ 337 
+ 338   // If the bci is a call instruction, i.e. any of the invoke* instructions,
+ 339   // the InterpreterOopMap does not include expression/operand stack liveness
+ 340   // info in the oop_mask/bit_mask. This can lead to a discrepancy of what
+ 341   // is actually on the expression stack compared to what is given by the
+ 342   // oop_map. We need to use the length reported in the oop_map.
+ 343   int length = oop_mask.expression_stack_size();
+ 344 
+ 345   assert(fr().interpreter_frame_expression_stack_size() &gt;= length,
+ 346     "error in expression stack!");
+ 347 
+ 348   StackValueCollection* result = new StackValueCollection(length);
+ 349 
+ 350   if (0 == length) {
+ 351     return result;
+ 352   }
+ 353 
+ 354   int nof_locals = method()-&gt;max_locals();
+ 355 
+ 356   // handle expressions
+ 357   for(int i=0; i &lt; length; i++) {
+ 358     // Find stack location
+ 359     intptr_t *addr = fr().interpreter_frame_expression_stack_at(i);
+ 360 
+ 361     // Depending on oop/int put it in the right package
+ 362     StackValue *sv;
+ 363     if (oop_mask.is_oop(i + nof_locals)) {
+ 364       // oop value
+ 365       Handle h(*(oop *)addr);
+ 366       sv = new StackValue(h);
+ 367     } else {
+ 368       // integer
+ 369       sv = new StackValue(*addr);
+ 370     }
+ 371     assert(sv != NULL, "sanity check");
+ 372     result-&gt;add(sv);
+ 373   }
+ 374   return result;
+ 375 }
+ 376 
+ 377 
+ 378 // ------------- cChunk --------------
+ 379 
+ 380 entryVFrame::entryVFrame(const frame* fr, const RegisterMap* reg_map, JavaThread* thread)
+ 381 : externalVFrame(fr, reg_map, thread) {}
+ 382 
+ 383 
+ 384 void vframeStreamCommon::found_bad_method_frame() {
+ 385   // 6379830 Cut point for an assertion that occasionally fires when
+ 386   // we are using the performance analyzer.
+ 387   // Disable this assert when testing the analyzer with fastdebug.
+ 388   // -XX:SuppressErrorAt=vframe.cpp:XXX (XXX=following line number)
+ 389   assert(false, "invalid bci or invalid scope desc");
+ 390 }
+ 391 
+ 392 // top-frame will be skipped
+ 393 vframeStream::vframeStream(JavaThread* thread, frame top_frame,
+ 394   bool stop_at_java_call_stub) : vframeStreamCommon(thread) {
+ 395   _stop_at_java_call_stub = stop_at_java_call_stub;
+ 396 
+ 397   // skip top frame, as it may not be at safepoint
+ 398   _frame  = top_frame.sender(&amp;_reg_map);
+ 399   while (!fill_from_frame()) {
+ 400     _frame = _frame.sender(&amp;_reg_map);
+ 401   }
+ 402 }
+ 403 
+ 404 
+ 405 // Step back n frames, skip any pseudo frames in between.
+ 406 // This function is used in Class.forName, Class.newInstance, Method.Invoke,
+ 407 // AccessController.doPrivileged.
+ 408 void vframeStreamCommon::security_get_caller_frame(int depth) {
+ 409   assert(depth &gt;= 0, err_msg("invalid depth: %d", depth));
+ 410   for (int n = 0; !at_end(); security_next()) {
+ 411     if (!method()-&gt;is_ignored_by_security_stack_walk()) {
+ 412       if (n == depth) {
+ 413         // We have reached the desired depth; return.
+ 414         return;
+ 415       }
+ 416       n++;  // this is a non-skipped frame; count it against the depth
+ 417     }
+ 418   }
+ 419   // NOTE: At this point there were not enough frames on the stack
+ 420   // to walk to depth.  Callers of this method have to check for at_end.
+ 421 }
+ 422 
+ 423 
+ 424 void vframeStreamCommon::security_next() {
+ 425   if (method()-&gt;is_prefixed_native()) {
+ 426     skip_prefixed_method_and_wrappers();  // calls next()
+ 427   } else {
+ 428     next();
+ 429   }
+ 430 }
+ 431 
+ 432 
+ 433 void vframeStreamCommon::skip_prefixed_method_and_wrappers() {
+ 434   ResourceMark rm;
+ 435   HandleMark hm;
+ 436 
+ 437   int    method_prefix_count = 0;
+ 438   char** method_prefixes = JvmtiExport::get_all_native_method_prefixes(&amp;method_prefix_count);
+ 439   KlassHandle prefixed_klass(method()-&gt;method_holder());
+ 440   const char* prefixed_name = method()-&gt;name()-&gt;as_C_string();
+ 441   size_t prefixed_name_len = strlen(prefixed_name);
+ 442   int prefix_index = method_prefix_count-1;
+ 443 
+ 444   while (!at_end()) {
+ 445     next();
+ 446     if (method()-&gt;method_holder() != prefixed_klass()) {
+ 447       break; // classes don't match, can't be a wrapper
+ 448     }
+ 449     const char* name = method()-&gt;name()-&gt;as_C_string();
+ 450     size_t name_len = strlen(name);
+ 451     size_t prefix_len = prefixed_name_len - name_len;
+ 452     if (prefix_len &lt;= 0 || strcmp(name, prefixed_name + prefix_len) != 0) {
+ 453       break; // prefixed name isn't prefixed version of method name, can't be a wrapper
+ 454     }
+ 455     for (; prefix_index &gt;= 0; --prefix_index) {
+ 456       const char* possible_prefix = method_prefixes[prefix_index];
+ 457       size_t possible_prefix_len = strlen(possible_prefix);
+ 458       if (possible_prefix_len == prefix_len &amp;&amp;
+ 459           strncmp(possible_prefix, prefixed_name, prefix_len) == 0) {
+ 460         break; // matching prefix found
+ 461       }
+ 462     }
+ 463     if (prefix_index &lt; 0) {
+ 464       break; // didn't find the prefix, can't be a wrapper
+ 465     }
+ 466     prefixed_name = name;
+ 467     prefixed_name_len = name_len;
+ 468   }
+ 469 }
+ 470 
+ 471 
+ 472 void vframeStreamCommon::skip_reflection_related_frames() {
+ 473   while (!at_end() &amp;&amp;
+ 474          (JDK_Version::is_gte_jdk14x_version() &amp;&amp;
+ 475           (method()-&gt;method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass()) ||
+ 476            method()-&gt;method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_ConstructorAccessorImpl_klass())))) {
+ 477     next();
+ 478   }
+ 479 }
+ 480 
+ 481 
+ 482 #ifndef PRODUCT
+ 483 void vframe::print() {
+ 484   if (WizardMode) _fr.print_value_on(tty,NULL);
+ 485 }
+ 486 
+ 487 
+ 488 void vframe::print_value() const {
+ 489   ((vframe*)this)-&gt;print();
+ 490 }
+ 491 
+ 492 
+ 493 void entryVFrame::print_value() const {
+ 494   ((entryVFrame*)this)-&gt;print();
+ 495 }
+ 496 
+ 497 void entryVFrame::print() {
+ 498   vframe::print();
+ 499   tty-&gt;print_cr("C Chunk inbetween Java");
+ 500   tty-&gt;print_cr("C     link " INTPTR_FORMAT, _fr.link());
+ 501 }
+ 502 
+ 503 
+ 504 // ------------- javaVFrame --------------
+ 505 
+ 506 static void print_stack_values(const char* title, StackValueCollection* values) {
+ 507   if (values-&gt;is_empty()) return;
+ 508   tty-&gt;print_cr("\t%s:", title);
+ 509   values-&gt;print();
+ 510 }
+ 511 
+ 512 
+ 513 void javaVFrame::print() {
+ 514   ResourceMark rm;
+ 515   vframe::print();
+ 516   tty-&gt;print("\t");
+ 517   method()-&gt;print_value();
+ 518   tty-&gt;cr();
+ 519   tty-&gt;print_cr("\tbci:    %d", bci());
+ 520 
+ 521   print_stack_values("locals",      locals());
+ 522   print_stack_values("expressions", expressions());
+ 523 
+ 524   GrowableArray&lt;MonitorInfo*&gt;* list = monitors();
+ 525   if (list-&gt;is_empty()) return;
+ 526   tty-&gt;print_cr("\tmonitor list:");
+ 527   for (int index = (list-&gt;length()-1); index &gt;= 0; index--) {
+ 528     MonitorInfo* monitor = list-&gt;at(index);
+ 529     tty-&gt;print("\t  obj\t");
+ 530     if (monitor-&gt;owner_is_scalar_replaced()) {
+ 531       Klass* k = java_lang_Class::as_Klass(monitor-&gt;owner_klass());
+ 532       tty-&gt;print("( is scalar replaced %s)", k-&gt;external_name());
+ 533     } else if (monitor-&gt;owner() == NULL) {
+ 534       tty-&gt;print("( null )");
+ 535     } else {
+ 536       monitor-&gt;owner()-&gt;print_value();
+ 537       tty-&gt;print("(" INTPTR_FORMAT ")", (address)monitor-&gt;owner());
+ 538     }
+ 539     if (monitor-&gt;eliminated() &amp;&amp; is_compiled_frame())
+ 540       tty-&gt;print(" ( lock is eliminated )");
+ 541     tty-&gt;cr();
+ 542     tty-&gt;print("\t  ");
+ 543     monitor-&gt;lock()-&gt;print_on(tty);
+ 544     tty-&gt;cr();
+ 545   }
+ 546 }
+ 547 
+ 548 
+ 549 void javaVFrame::print_value() const {
+ 550   Method*    m = method();
+ 551   InstanceKlass*     k = m-&gt;method_holder();
+ 552   tty-&gt;print_cr("frame( sp=" INTPTR_FORMAT ", unextended_sp=" INTPTR_FORMAT ", fp=" INTPTR_FORMAT ", pc=" INTPTR_FORMAT ")",
+ 553                 _fr.sp(),  _fr.unextended_sp(), _fr.fp(), _fr.pc());
+ 554   tty-&gt;print("%s.%s", k-&gt;internal_name(), m-&gt;name()-&gt;as_C_string());
+ 555 
+ 556   if (!m-&gt;is_native()) {
+ 557     Symbol*  source_name = k-&gt;source_file_name();
+ 558     int        line_number = m-&gt;line_number_from_bci(bci());
+ 559     if (source_name != NULL &amp;&amp; (line_number != -1)) {
+ 560       tty-&gt;print("(%s:%d)", source_name-&gt;as_C_string(), line_number);
+ 561     }
+ 562   } else {
+ 563     tty-&gt;print("(Native Method)");
+ 564   }
+ 565   // Check frame size and print warning if it looks suspiciously large
+ 566   if (fr().sp() != NULL) {
+ 567     RegisterMap map = *register_map();
+ 568     uint size = fr().frame_size(&amp;map);
+ 569 #ifdef _LP64
+ 570     if (size &gt; 8*K) warning("SUSPICIOUSLY LARGE FRAME (%d)", size);
+ 571 #else
+ 572     if (size &gt; 4*K) warning("SUSPICIOUSLY LARGE FRAME (%d)", size);
+ 573 #endif
+ 574   }
+ 575 }
+ 576 
+ 577 
+ 578 bool javaVFrame::structural_compare(javaVFrame* other) {
+ 579   // Check static part
+ 580   if (method() != other-&gt;method()) return false;
+ 581   if (bci()    != other-&gt;bci())    return false;
+ 582 
+ 583   // Check locals
+ 584   StackValueCollection *locs = locals();
+ 585   StackValueCollection *other_locs = other-&gt;locals();
+ 586   assert(locs-&gt;size() == other_locs-&gt;size(), "sanity check");
+ 587   int i;
+ 588   for(i = 0; i &lt; locs-&gt;size(); i++) {
+ 589     // it might happen the compiler reports a conflict and
+ 590     // the interpreter reports a bogus int.
+ 591     if (       is_compiled_frame() &amp;&amp;       locs-&gt;at(i)-&gt;type() == T_CONFLICT) continue;
+ 592     if (other-&gt;is_compiled_frame() &amp;&amp; other_locs-&gt;at(i)-&gt;type() == T_CONFLICT) continue;
+ 593 
+ 594     if (!locs-&gt;at(i)-&gt;equal(other_locs-&gt;at(i)))
+ 595       return false;
+ 596   }
+ 597 
+ 598   // Check expressions
+ 599   StackValueCollection* exprs = expressions();
+ 600   StackValueCollection* other_exprs = other-&gt;expressions();
+ 601   assert(exprs-&gt;size() == other_exprs-&gt;size(), "sanity check");
+ 602   for(i = 0; i &lt; exprs-&gt;size(); i++) {
+ 603     if (!exprs-&gt;at(i)-&gt;equal(other_exprs-&gt;at(i)))
+ 604       return false;
+ 605   }
+ 606 
+ 607   return true;
+ 608 }
+ 609 
+ 610 
+ 611 void javaVFrame::print_activation(int index) const {
+ 612   // frame number and method
+ 613   tty-&gt;print("%2d - ", index);
+ 614   ((vframe*)this)-&gt;print_value();
+ 615   tty-&gt;cr();
+ 616 
+ 617   if (WizardMode) {
+ 618     ((vframe*)this)-&gt;print();
+ 619     tty-&gt;cr();
+ 620   }
+ 621 }
+ 622 
+ 623 
+ 624 void javaVFrame::verify() const {
+ 625 }
+ 626 
+ 627 
+ 628 void interpretedVFrame::verify() const {
+ 629 }
+ 630 
+ 631 
+ 632 // ------------- externalVFrame --------------
+ 633 
+ 634 void externalVFrame::print() {
+ 635   _fr.print_value_on(tty,NULL);
+ 636 }
+ 637 
+ 638 
+ 639 void externalVFrame::print_value() const {
+ 640   ((vframe*)this)-&gt;print();
+ 641 }
+ 642 #endif // PRODUCT
+</pre></body></html>

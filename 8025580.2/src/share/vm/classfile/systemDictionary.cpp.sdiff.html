@@ -1,0 +1,267 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/classfile </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/classfile/systemDictionary.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 583         }
+ 584       } else {
+ 585         // If not in SD and not in PH, other thread's load must have failed
+ 586         super_load_in_progress = false;
+ 587       }
+ 588     }
+ 589   }
+ 590   return (nh);
+ 591 }
+ 592 
+ 593 
+ 594 Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name,
+ 595                                                         Handle class_loader,
+ 596                                                         Handle protection_domain,
+ 597                                                         TRAPS) {
+ 598   assert(name != NULL &amp;&amp; !FieldType::is_array(name) &amp;&amp;
+ 599          !FieldType::is_obj(name), "invalid class name");
+ 600 
+ 601   Ticks class_load_start_time = Ticks::now();
+ 602 
+<span class="removed"> 603   // UseNewReflection</span>
+ 604   // Fix for 4474172; see evaluation for more details
+ 605   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
+ 606   ClassLoaderData *loader_data = register_loader(class_loader, CHECK_NULL);
+ 607 
+ 608   // Do lookup to see if class already exist and the protection domain
+ 609   // has the right access
+ 610   // This call uses find which checks protection domain already matches
+ 611   // All subsequent calls use find_class, and set has_loaded_class so that
+ 612   // before we return a result we call out to java to check for valid protection domain
+ 613   // to allow returning the Klass* and add it to the pd_set if it is valid
+ 614   unsigned int d_hash = dictionary()-&gt;compute_hash(name, loader_data);
+ 615   int d_index = dictionary()-&gt;hash_to_index(d_hash);
+ 616   Klass* probe = dictionary()-&gt;find(d_index, d_hash, name, loader_data,
+ 617                                       protection_domain, THREAD);
+ 618   if (probe != NULL) return probe;
+ 619 
+ 620 
+ 621   // Non-bootstrap class loaders will call out to class loader and
+ 622   // define via jvm/jni_DefineClass which will acquire the
+ 623   // class loader object lock to protect against multiple threads
+
+</pre><hr></hr><pre>
+ 877   return k();
+ 878 }
+ 879 
+ 880 
+ 881 // This routine does not lock the system dictionary.
+ 882 //
+ 883 // Since readers don't hold a lock, we must make sure that system
+ 884 // dictionary entries are only removed at a safepoint (when only one
+ 885 // thread is running), and are added to in a safe way (all links must
+ 886 // be updated in an MT-safe manner).
+ 887 //
+ 888 // Callers should be aware that an entry could be added just after
+ 889 // _dictionary-&gt;bucket(index) is read here, so the caller will not see
+ 890 // the new entry.
+ 891 
+ 892 Klass* SystemDictionary::find(Symbol* class_name,
+ 893                               Handle class_loader,
+ 894                               Handle protection_domain,
+ 895                               TRAPS) {
+ 896 
+<span class="removed"> 897   // UseNewReflection</span>
+ 898   // The result of this call should be consistent with the result
+ 899   // of the call to resolve_instance_class_or_null().
+ 900   // See evaluation 6790209 and 4474172 for more details.
+ 901   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
+ 902   ClassLoaderData* loader_data = ClassLoaderData::class_loader_data_or_null(class_loader());
+ 903 
+ 904   if (loader_data == NULL) {
+ 905     // If the ClassLoaderData has not been setup,
+ 906     // then the class loader has no entries in the dictionary.
+ 907     return NULL;
+ 908   }
+ 909 
+ 910   unsigned int d_hash = dictionary()-&gt;compute_hash(class_name, loader_data);
+ 911   int d_index = dictionary()-&gt;hash_to_index(d_hash);
+ 912 
+ 913   {
+ 914     // Note that we have an entry, and entries can be deleted only during GC,
+ 915     // so we cannot allow GC to occur while we're holding this entry.
+ 916     // We're using a No_Safepoint_Verifier to catch any place where we
+ 917     // might potentially do a GC at all.
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 583         }
+ 584       } else {
+ 585         // If not in SD and not in PH, other thread's load must have failed
+ 586         super_load_in_progress = false;
+ 587       }
+ 588     }
+ 589   }
+ 590   return (nh);
+ 591 }
+ 592 
+ 593 
+ 594 Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name,
+ 595                                                         Handle class_loader,
+ 596                                                         Handle protection_domain,
+ 597                                                         TRAPS) {
+ 598   assert(name != NULL &amp;&amp; !FieldType::is_array(name) &amp;&amp;
+ 599          !FieldType::is_obj(name), "invalid class name");
+ 600 
+ 601   Ticks class_load_start_time = Ticks::now();
+ 602 
+
+ 603   // Fix for 4474172; see evaluation for more details
+ 604   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
+ 605   ClassLoaderData *loader_data = register_loader(class_loader, CHECK_NULL);
+ 606 
+ 607   // Do lookup to see if class already exist and the protection domain
+ 608   // has the right access
+ 609   // This call uses find which checks protection domain already matches
+ 610   // All subsequent calls use find_class, and set has_loaded_class so that
+ 611   // before we return a result we call out to java to check for valid protection domain
+ 612   // to allow returning the Klass* and add it to the pd_set if it is valid
+ 613   unsigned int d_hash = dictionary()-&gt;compute_hash(name, loader_data);
+ 614   int d_index = dictionary()-&gt;hash_to_index(d_hash);
+ 615   Klass* probe = dictionary()-&gt;find(d_index, d_hash, name, loader_data,
+ 616                                       protection_domain, THREAD);
+ 617   if (probe != NULL) return probe;
+ 618 
+ 619 
+ 620   // Non-bootstrap class loaders will call out to class loader and
+ 621   // define via jvm/jni_DefineClass which will acquire the
+ 622   // class loader object lock to protect against multiple threads
+
+</pre><hr></hr><pre>
+ 876   return k();
+ 877 }
+ 878 
+ 879 
+ 880 // This routine does not lock the system dictionary.
+ 881 //
+ 882 // Since readers don't hold a lock, we must make sure that system
+ 883 // dictionary entries are only removed at a safepoint (when only one
+ 884 // thread is running), and are added to in a safe way (all links must
+ 885 // be updated in an MT-safe manner).
+ 886 //
+ 887 // Callers should be aware that an entry could be added just after
+ 888 // _dictionary-&gt;bucket(index) is read here, so the caller will not see
+ 889 // the new entry.
+ 890 
+ 891 Klass* SystemDictionary::find(Symbol* class_name,
+ 892                               Handle class_loader,
+ 893                               Handle protection_domain,
+ 894                               TRAPS) {
+ 895 
+
+ 896   // The result of this call should be consistent with the result
+ 897   // of the call to resolve_instance_class_or_null().
+ 898   // See evaluation 6790209 and 4474172 for more details.
+ 899   class_loader = Handle(THREAD, java_lang_ClassLoader::non_reflection_class_loader(class_loader()));
+ 900   ClassLoaderData* loader_data = ClassLoaderData::class_loader_data_or_null(class_loader());
+ 901 
+ 902   if (loader_data == NULL) {
+ 903     // If the ClassLoaderData has not been setup,
+ 904     // then the class loader has no entries in the dictionary.
+ 905     return NULL;
+ 906   }
+ 907 
+ 908   unsigned int d_hash = dictionary()-&gt;compute_hash(class_name, loader_data);
+ 909   int d_index = dictionary()-&gt;hash_to_index(d_hash);
+ 910 
+ 911   {
+ 912     // Note that we have an entry, and entries can be deleted only during GC,
+ 913     // so we cannot allow GC to occur while we're holding this entry.
+ 914     // We're using a No_Safepoint_Verifier to catch any place where we
+ 915     // might potentially do a GC at all.
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>

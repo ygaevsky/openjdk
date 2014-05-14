@@ -1,0 +1,181 @@
+<?xml version="1.0"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="-1" />
+<!--
+   Note to customizers: the body of the webrev is IDed as SUNWwebrev
+   to allow easy overriding by users of webrev via the userContent.css
+   mechanism available in some browsers.
+
+   For example, to have all "removed" information be red instead of
+   brown, set a rule in your userContent.css file like:
+
+       body#SUNWwebrev span.removed { color: red ! important; }
+-->
+<style type="text/css" media="screen">
+body {
+    background-color: #eeeeee;
+}
+hr {
+    border: none 0;
+    border-top: 1px solid #aaa;
+    height: 1px;
+}
+div.summary {
+    font-size: .8em;
+    border-bottom: 1px solid #aaa;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+div.summary h2 {
+    margin-bottom: 0.3em;
+}
+div.summary table th {
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+}
+span.lineschanged {
+    font-size: 0.7em;
+}
+span.oldmarker {
+    color: red;
+    font-size: large;
+    font-weight: bold;
+}
+span.newmarker {
+    color: green;
+    font-size: large;
+    font-weight: bold;
+}
+span.removed {
+    color: brown;
+}
+span.changed {
+    color: blue;
+}
+span.new {
+    color: blue;
+    font-weight: bold;
+}
+a.print { font-size: x-small; }
+
+</style>
+
+<style type="text/css" media="print">
+pre { font-size: 0.8em; font-family: courier, monospace; }
+span.removed { color: #444; font-style: italic }
+span.changed { font-weight: bold; }
+span.new { font-weight: bold; }
+span.newmarker { font-size: 1.2em; font-weight: bold; }
+span.oldmarker { font-size: 1.2em; font-weight: bold; }
+a.print {display: none}
+hr { border: none 0; border-top: 1px solid #aaa; height: 1px; }
+</style>
+
+<title>hotspot Sdiff src/share/vm/runtime </title>
+</head><body id="SUNWwebrev">
+<h2>src/share/vm/runtime/vframe.cpp</h2>
+<a class="print" href="javascript:print()">Print this page</a>
+<pre></pre>
+
+<table><tr valign="top">
+<td><pre>
+
+</pre><hr></hr><pre>
+ 454     }
+ 455     for (; prefix_index &gt;= 0; --prefix_index) {
+ 456       const char* possible_prefix = method_prefixes[prefix_index];
+ 457       size_t possible_prefix_len = strlen(possible_prefix);
+ 458       if (possible_prefix_len == prefix_len &amp;&amp;
+ 459           strncmp(possible_prefix, prefixed_name, prefix_len) == 0) {
+ 460         break; // matching prefix found
+ 461       }
+ 462     }
+ 463     if (prefix_index &lt; 0) {
+ 464       break; // didn't find the prefix, can't be a wrapper
+ 465     }
+ 466     prefixed_name = name;
+ 467     prefixed_name_len = name_len;
+ 468   }
+ 469 }
+ 470 
+ 471 
+ 472 void vframeStreamCommon::skip_reflection_related_frames() {
+ 473   while (!at_end() &amp;&amp;
+<span class="changed"> 474          (JDK_Version::is_gte_jdk14x_version() &amp;&amp; UseNewReflection &amp;&amp;</span>
+ 475           (method()-&gt;method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass()) ||
+ 476            method()-&gt;method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_ConstructorAccessorImpl_klass())))) {
+ 477     next();
+ 478   }
+ 479 }
+ 480 
+ 481 
+ 482 #ifndef PRODUCT
+ 483 void vframe::print() {
+ 484   if (WizardMode) _fr.print_value_on(tty,NULL);
+ 485 }
+ 486 
+ 487 
+ 488 void vframe::print_value() const {
+ 489   ((vframe*)this)-&gt;print();
+ 490 }
+ 491 
+ 492 
+ 493 void entryVFrame::print_value() const {
+ 494   ((entryVFrame*)this)-&gt;print();
+
+</pre><hr></hr>
+</pre></td><td><pre>
+
+</pre><hr></hr><pre>
+ 454     }
+ 455     for (; prefix_index &gt;= 0; --prefix_index) {
+ 456       const char* possible_prefix = method_prefixes[prefix_index];
+ 457       size_t possible_prefix_len = strlen(possible_prefix);
+ 458       if (possible_prefix_len == prefix_len &amp;&amp;
+ 459           strncmp(possible_prefix, prefixed_name, prefix_len) == 0) {
+ 460         break; // matching prefix found
+ 461       }
+ 462     }
+ 463     if (prefix_index &lt; 0) {
+ 464       break; // didn't find the prefix, can't be a wrapper
+ 465     }
+ 466     prefixed_name = name;
+ 467     prefixed_name_len = name_len;
+ 468   }
+ 469 }
+ 470 
+ 471 
+ 472 void vframeStreamCommon::skip_reflection_related_frames() {
+ 473   while (!at_end() &amp;&amp;
+<span class="changed"> 474          (JDK_Version::is_gte_jdk14x_version() &amp;&amp;</span>
+ 475           (method()-&gt;method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_MethodAccessorImpl_klass()) ||
+ 476            method()-&gt;method_holder()-&gt;is_subclass_of(SystemDictionary::reflect_ConstructorAccessorImpl_klass())))) {
+ 477     next();
+ 478   }
+ 479 }
+ 480 
+ 481 
+ 482 #ifndef PRODUCT
+ 483 void vframe::print() {
+ 484   if (WizardMode) _fr.print_value_on(tty,NULL);
+ 485 }
+ 486 
+ 487 
+ 488 void vframe::print_value() const {
+ 489   ((vframe*)this)-&gt;print();
+ 490 }
+ 491 
+ 492 
+ 493 void entryVFrame::print_value() const {
+ 494   ((entryVFrame*)this)-&gt;print();
+
+</pre><hr></hr>
+</pre></td>
+</tr></table>
+</body></html>
